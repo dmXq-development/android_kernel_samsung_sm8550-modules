@@ -465,7 +465,6 @@ static int cam_jpeg_mgr_bottom_half_irq(void *priv, void *data)
 					(struct cam_jpeg_config_inout_param_info *)cmd_buf_kaddr;
 				inout_params->output_size = task_data->u.output_encode_size;
 			}
-			cam_mem_put_cpu_buf(jpeg_req->out_size_mem_handle);
 		}
 		else
 			CAM_ERR(CAM_JPEG, "Buffer pointer for inout param is null");
