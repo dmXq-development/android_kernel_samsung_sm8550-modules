@@ -19,7 +19,6 @@ KBUILD_OPTIONS += \
     WLAN_COMMON_INC=$(KERNEL_SRC)/$(M)/cmn \
     WLAN_FW_API=$(KERNEL_SRC)/$(M)/../fw-api \
     CONFIG_QCA_CLD_WLAN=m \
-    CONFIG_CNSS_KIWI_V2=y \
     CONFIG_CNSS_OUT_OF_TREE=y \
     CONFIG_CNSS2=m \
     CONFIG_CNSS2_QMI=y \
@@ -30,12 +29,24 @@ KBUILD_OPTIONS += \
     CONFIG_CNSS_UTILS=m \
     CONFIG_CNSS_HW_SECURE_DISABLE=y \
     CONFIG_BUS_AUTO_SUSPEND=y \
+    BOARD_PLATFORM=kalama \
+    WLAN_CTRL_NAME=wlan
+
+ifeq ($(CONFIG_SEC_PLATFORM_DM3Q), y)
+KBUILD_OPTIONS += \
+    CONFIG_CNSS_KIWI_V2=y \
     WLAN_PROFILE=kiwi_v2 \
     DYNAMIC_SINGLE_CHIP=kiwi_v2 \
     MODNAME=qca_cld3_kiwi_v2 \
-    DEVNAME=kiwi_v2 \
-    BOARD_PLATFORM=kalama \
-    WLAN_CTRL_NAME=wlan
+    DEVNAME=kiwi_v2
+else
+KBUILD_OPTIONS += \
+    CONFIG_CNSS_QCA6490=y \
+    WLAN_PROFILE=qca6490 \
+    DYNAMIC_SINGLE_CHIP=qca6490 \
+    MODNAME=qca_cld3_qca6490 \
+    DEVNAME=qca6490
+endif
 endif
 
 KBUILD_OPTIONS += KBUILD_EXTRA_SYMBOLS=$(OUT_DIR)/../sm8550-modules/qcom/opensource/wlan/platform/Module.symvers
