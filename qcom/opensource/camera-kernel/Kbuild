@@ -82,9 +82,16 @@ SRC_UW_FILES = $(CAMERA_KERNEL_PATH)/drivers/cam_sensor_module/cam_sensor/adapti
 SRC_FRONT_FILES = $(CAMERA_KERNEL_PATH)/drivers/cam_sensor_module/cam_sensor/adaptive_mipi/cam_sensor_adaptive_mipi_s5k3j1.h
 endif
 
-DST_WIDE_FILES = $(CAMERA_KERNEL_PATH)/drivers/cam_sensor_module/cam_sensor/cam_sensor_adaptive_mipi_wide.h
 DST_UW_FILES = $(CAMERA_KERNEL_PATH)/drivers/cam_sensor_module/cam_sensor/cam_sensor_adaptive_mipi_uw.h
+
+ifeq ($(CONFIG_SEC_DM3Q_PROJECT), y)
+DST_WIDE_FILES = $(CAMERA_KERNEL_PATH)/drivers/cam_sensor_module/cam_sensor/cam_sensor_adaptive_mipi_wide_s5khp2.h
+DST_TELE_FILES = $(CAMERA_KERNEL_PATH)/drivers/cam_sensor_module/cam_sensor/cam_sensor_adaptive_mipi_tele_imx754.h
+else
+DST_WIDE_FILES = $(CAMERA_KERNEL_PATH)/drivers/cam_sensor_module/cam_sensor/cam_sensor_adaptive_mipi_wide.h
 DST_TELE_FILES = $(CAMERA_KERNEL_PATH)/drivers/cam_sensor_module/cam_sensor/cam_sensor_adaptive_mipi_tele.h
+endif
+
 DST_FRONT_FILES = $(CAMERA_KERNEL_PATH)/drivers/cam_sensor_module/cam_sensor/cam_sensor_adaptive_mipi_front.h
 DST_FRONT_TOP_FILES = $(CAMERA_KERNEL_PATH)/drivers/cam_sensor_module/cam_sensor/cam_sensor_adaptive_mipi_front_top.h
 

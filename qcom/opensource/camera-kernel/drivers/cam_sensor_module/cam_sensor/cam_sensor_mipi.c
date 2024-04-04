@@ -16,9 +16,14 @@
 #include <linux/kernel.h>
 #include <linux/dev_ril_bridge.h>
 #include "cam_sensor_mipi.h"
+#if defined(CONFIG_SEC_PLATFORM_DM3Q)
+#include "cam_sensor_adaptive_mipi_wide_s5khp2.h"
+#include "cam_sensor_adaptive_mipi_tele_imx754.h"
+#else
 #include "cam_sensor_adaptive_mipi_wide.h"
-#include "cam_sensor_adaptive_mipi_uw.h"
 #include "cam_sensor_adaptive_mipi_tele.h"
+#endif
+#include "cam_sensor_adaptive_mipi_uw.h"
 #include "cam_sensor_adaptive_mipi_front.h"
 #include "cam_sensor_adaptive_mipi_front_top.h"
 #include "cam_sensor_dev.h"
