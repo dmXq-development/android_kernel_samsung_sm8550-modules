@@ -265,6 +265,8 @@ include $(DISPLAY_ROOT)/msm/samsung/panel_common.conf
 ccflags-y +=	-include $(DISPLAY_ROOT)/msm/samsung/panel_common_conf.h
 
 msm_drm-$(CONFIG_DISPLAY_SAMSUNG) += samsung/PBA_BOOTING/ss_dsi_panel_PBA_BOOTING_fhd.o
+
+ifeq ($(CONFIG_SEC_PLATFORM_DM2Q), y)
 include $(DISPLAY_ROOT)/msm/samsung/S6E3FAC_AMB655AY01/display_S6E3FAC_AMB655AY01.conf
 ccflags-y +=	-include $(DISPLAY_ROOT)/msm/samsung/S6E3FAC_AMB655AY01/display_S6E3FAC_AMB655AY01.h
 
@@ -273,7 +275,33 @@ include $(DISPLAY_ROOT)/msm/samsung/DM2_S6E3FAC_AMB655AY01/DM2_S6E3FAC_AMB655AY0
 ccflags-y +=	-include $(DISPLAY_ROOT)/msm/samsung/DM2_S6E3FAC_AMB655AY01/DM2_S6E3FAC_AMB655AY01.h
 
 msm_drm-$(CONFIG_PANEL_DM2_S6E3FAC_AMB655AY01_FHD) += samsung/DM2_S6E3FAC_AMB655AY01/DM2_S6E3FAC_AMB655AY01_panel.o
+endif
 
+ifeq ($(CONFIG_SEC_PLATFORM_DM1Q), y)
+include $(DISPLAY_ROOT)/msm/samsung/DM1_S6E3FAC_AMB606AW01/DM1_S6E3FAC_AMB606AW01.conf
+ccflags-y +=	-include $(DISPLAY_ROOT)/msm/samsung/DM1_S6E3FAC_AMB606AW01/DM1_S6E3FAC_AMB606AW01.h
+
+msm_drm-$(CONFIG_PANEL_DM1_S6E3FAC_AMB606AW01_FHD) += samsung/DM1_S6E3FAC_AMB606AW01/DM1_S6E3FAC_AMB606AW01_panel.o
+
+include $(DISPLAY_ROOT)/msm/samsung/DM1_LX83118_CM002/DM1_LX83118_CM002.conf
+ccflags-y += -include $(DISPLAY_ROOT)/msm/samsung/DM1_LX83118_CM002/DM1_LX83118_CM002.h
+
+XXD := /usr/bin/xxd
+SED := /bin/sed
+
+#Translate .dat file to .h to cover the case which can not use request_firmware(Recovery Mode)
+CLEAR_TMP := $(shell rm -f DM1_LX83118_CM002_PDF_DATA)
+COPY_TO_HERE := $(shell cp -vf $(DISPLAY_ROOT)/msm/samsung/panel_data_file/DM1_LX83118_CM002.dat DM1_LX83118_CM002_PDF_DATA)
+DATA_TO_HEX := $(shell $(XXD) -i DM1_LX83118_CM002_PDF_DATA > $(DISPLAY_ROOT)/msm/samsung/DM1_LX83118_CM002/DM1_LX83118_CM002_PDF.h)
+ADD_NULL_CHR := $(shell $(SED) -i -e 's/\([0-9a-f]\)$$/\0, 0x00/' $(DISPLAY_ROOT)/msm/samsung/DM1_LX83118_CM002/DM1_LX83118_CM002_PDF.h)
+
+msm_drm-$(CONFIG_PANEL_DM1_LX83118_CM002_FHD) += samsung/DM1_LX83118_CM002/DM1_LX83118_CM002_panel.o
+
+include $(DISPLAY_ROOT)/msm/samsung/S6E3FAC_AMB606AW01/display_S6E3FAC_AMB606AW01.conf
+ccflags-y +=	-include $(DISPLAY_ROOT)/msm/samsung/S6E3FAC_AMB606AW01/display_S6E3FAC_AMB606AW01.h
+
+msm_drm-$(CONFIG_PANEL_S6E3FAC_AMB606AW01_FHD) += samsung/S6E3FAC_AMB606AW01/ss_dsi_panel_S6E3FAC_AMB606AW01.o
+endif
 include $(DISPLAY_ROOT)/msm/samsung/panel_common.conf
 ccflags-y +=	-include $(DISPLAY_ROOT)/msm/samsung/panel_common_conf.h
 
