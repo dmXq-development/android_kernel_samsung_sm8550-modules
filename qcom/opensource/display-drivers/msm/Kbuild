@@ -265,6 +265,17 @@ include $(DISPLAY_ROOT)/msm/samsung/panel_common.conf
 ccflags-y +=	-include $(DISPLAY_ROOT)/msm/samsung/panel_common_conf.h
 
 msm_drm-$(CONFIG_DISPLAY_SAMSUNG) += samsung/PBA_BOOTING/ss_dsi_panel_PBA_BOOTING_fhd.o
+ifeq ($(CONFIG_SEC_PLATFORM_DM3Q), y)
+include $(DISPLAY_ROOT)/msm/samsung/DM3_S6E3HAE_AMB681AZ01/DM3_S6E3HAE_AMB681AZ01.conf
+ccflags-y +=	-include $(DISPLAY_ROOT)/msm/samsung/DM3_S6E3HAE_AMB681AZ01/DM3_S6E3HAE_AMB681AZ01.h
+
+msm_drm-$(CONFIG_PANEL_DM3_S6E3HAE_AMB681AZ01_WQHD) += samsung/DM3_S6E3HAE_AMB681AZ01/DM3_S6E3HAE_AMB681AZ01_panel.o
+
+include $(DISPLAY_ROOT)/msm/samsung/S6E3HAE_AMB681AZ01/display_S6E3HAE_AMB681AZ01.conf
+ccflags-y +=	-include $(DISPLAY_ROOT)/msm/samsung/S6E3HAE_AMB681AZ01/display_S6E3HAE_AMB681AZ01.h
+
+msm_drm-$(CONFIG_PANEL_S6E3HAE_AMB681AZ01_WQHD) += samsung/S6E3HAE_AMB681AZ01/ss_dsi_panel_S6E3HAE_AMB681AZ01.o
+endif
 
 ifeq ($(CONFIG_SEC_PLATFORM_DM2Q), y)
 include $(DISPLAY_ROOT)/msm/samsung/S6E3FAC_AMB655AY01/display_S6E3FAC_AMB655AY01.conf
