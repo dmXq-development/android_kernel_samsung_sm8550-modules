@@ -29,6 +29,10 @@
 #include "dp_debug.h"
 #include "dp_pll.h"
 
+#if 0/*defined(CONFIG_SECDP)*/
+#include <linux/secdp_logger.h>
+#endif
+
 #define DP_PHY_CFG				0x0010
 #define DP_PHY_CFG_1				0x0014
 #define DP_PHY_PD_CTL				0x0018

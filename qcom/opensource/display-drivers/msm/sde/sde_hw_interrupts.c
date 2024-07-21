@@ -373,6 +373,8 @@ static struct sde_irq_type sde_irq_ad4_map[] = {
 static struct sde_irq_type sde_irq_intf_te_map[] = {
 	{ SDE_IRQ_TYPE_INTF_TEAR_AUTO_REF, -1,
 		SDE_INTR_INTF_TEAR_AUTOREFRESH_DONE, -1},
+	{ SDE_IRQ_TYPE_INTF_TEAR_TE_CHECK, -1,
+		SDE_INTR_INTF_TEAR_TE_DETECTED, -1},
 	{ SDE_IRQ_TYPE_INTF_TEAR_WR_PTR, -1,
 		SDE_INTR_INTF_TEAR_WR_PTR, -1},
 	{ SDE_IRQ_TYPE_INTF_TEAR_RD_PTR, -1,
