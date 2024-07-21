@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2023, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/string.h>
@@ -27,6 +26,27 @@ static struct cam_common_err_inject_info g_err_inject_info;
 
 static uint timeout_multiplier = 1;
 module_param(timeout_multiplier, uint, 0644);
+
+#if defined(CONFIG_SAMSUNG_DEBUG_HW_INFO)
+void cam_check_error_sensor_type(int csiphy_num) {
+	if (csiphy_num == WIDE_CAM)
+		CAM_INFO(CAM_ISP, "[MIPI_DBG] WIDE_CAM mipi error!! (csiphy %d)", csiphy_num);
+	else if (csiphy_num == UW_CAM)
+		CAM_INFO(CAM_ISP, "[MIPI_DBG] UW_CAM mipi error!! (csiphy %d)", csiphy_num);
+	else if (csiphy_num == TELE1_CAM)
+		CAM_INFO(CAM_ISP, "[MIPI_DBG] TELE1_CAM mipi error!! (csiphy %d)", csiphy_num);
+	else if (csiphy_num == TELE2_CAM)
+		CAM_INFO(CAM_ISP, "[MIPI_DBG] TELE2_CAM mipi error!! (csiphy %d)", csiphy_num);
+	else if (csiphy_num == FRONT_CAM)
+		CAM_INFO(CAM_ISP, "[MIPI_DBG] FRONT_CAM mipi error!! (csiphy %d)", csiphy_num);
+	else if (csiphy_num == COVER_CAM)
+                CAM_INFO(CAM_ISP, "[MIPI_DBG] COVER_CAM mipi error!! (csiphy %d)", csiphy_num);
+	else if (csiphy_num == FRONT_AUX)
+                CAM_INFO(CAM_ISP, "[MIPI_DBG] COVER_CAM mipi error!! (csiphy %d)", csiphy_num);
+	else
+		CAM_INFO(CAM_ISP, "[MIPI_DBG] Unknown camera mipi error!! (csiphy %d)", csiphy_num);
+}
+#endif
 
 int cam_common_util_get_string_index(const char **strings,
 	uint32_t num_strings, const char *matching_string, uint32_t *index)
@@ -139,8 +159,8 @@ int cam_common_modify_timer(struct timer_list *timer, int32_t timeout_val)
 	return 0;
 }
 
-void cam_common_util_thread_switch_delay_detect(char *wq_name, const char *state,
-	void *cb, ktime_t scheduled_time, uint32_t threshold)
+void cam_common_util_thread_switch_delay_detect(
+	const char *token, ktime_t scheduled_time, uint32_t threshold)
 {
 	uint64_t                         diff;
 	ktime_t                          cur_time;
@@ -154,9 +174,8 @@ void cam_common_util_thread_switch_delay_detect(char *wq_name, const char *state
 		scheduled_ts  = ktime_to_timespec64(scheduled_time);
 		cur_ts = ktime_to_timespec64(cur_time);
 		CAM_WARN_RATE_LIMIT_CUSTOM(CAM_UTIL, 1, 1,
-			"%s cb: %ps delay in %s detected %ld:%06ld cur %ld:%06ld\n"
-			"diff %ld: threshold %d\n",
-			wq_name, cb, state, scheduled_ts.tv_sec,
+			"%s delay detected %ld:%06ld cur %ld:%06ld diff %ld: threshold %d",
+			token, scheduled_ts.tv_sec,
 			scheduled_ts.tv_nsec/NSEC_PER_USEC,
 			cur_ts.tv_sec, cur_ts.tv_nsec/NSEC_PER_USEC,
 			diff, threshold);
@@ -417,9 +436,7 @@ static int cam_err_inject_set(const char *kmessage,
 		switch (param_counter) {
 		case HW_NAME:
 			if (strcmp(token_start, CAM_COMMON_IFE_NODE) == 0)
-				err_params->hw_id = CAM_COMMON_ERR_INJECT_HW_IFE;
-			if (strcmp(token_start, CAM_COMMON_TFE_NODE) == 0)
-				err_params->hw_id = CAM_COMMON_ERR_INJECT_HW_TFE;
+				err_params->hw_id = CAM_COMMON_ERR_INJECT_HW_ISP;
 			else if (strcmp(token_start, CAM_COMMON_ICP_NODE) == 0)
 				err_params->hw_id = CAM_COMMON_ERR_INJECT_HW_ICP;
 			else if (strcmp(token_start, CAM_COMMON_JPEG_NODE) == 0)
@@ -503,11 +520,8 @@ static int cam_err_inject_get(char *buffer,
 	else if (!list_empty(&g_err_inject_info.active_err_ctx_list)) {
 		list_for_each_entry(err_param, &g_err_inject_info.active_err_ctx_list, list) {
 			switch (err_param->hw_id) {
-			case CAM_COMMON_ERR_INJECT_HW_IFE:
+			case CAM_COMMON_ERR_INJECT_HW_ISP:
 				strscpy(hw_name, CAM_COMMON_IFE_NODE, 10);
-				break;
-			case CAM_COMMON_ERR_INJECT_HW_TFE:
-				strscpy(hw_name, CAM_COMMON_TFE_NODE, 10);
 				break;
 			case CAM_COMMON_ERR_INJECT_HW_ICP:
 				strscpy(hw_name, CAM_COMMON_ICP_NODE, 10);

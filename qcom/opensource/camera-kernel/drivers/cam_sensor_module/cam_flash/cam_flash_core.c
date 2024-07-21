@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/module.h>
@@ -11,6 +11,36 @@
 #include "cam_res_mgr_api.h"
 #include "cam_common_util.h"
 #include "cam_packet_util.h"
+#if IS_REACHABLE(CONFIG_LEDS_S2MPB02)
+#include <linux/leds-s2mpb02.h>
+#endif
+#if defined(CONFIG_SAMSUNG_PMIC_FLASH)
+#define MAX_FLASHLIGHT_LEVEL 5
+
+extern struct cam_flash_ctrl *g_flash_ctrl;
+struct cam_flash_frame_setting g_flash_data;
+
+typedef struct {
+        uint32_t level;
+        uint32_t current_mA;
+} FlashlightLevelInfo;
+
+FlashlightLevelInfo calibData[MAX_FLASHLIGHT_LEVEL] = {
+#if defined(CONFIG_SEC_B5Q_PROJECT)
+        {1001, 40},
+        {1002, 60},
+        {1004, 80},
+        {1006, 140},
+        {1009, 160}
+#else
+        {1001, 25},
+        {1002, 50},
+        {1004, 75},
+        {1006, 100},
+        {1009, 125}
+#endif
+};
+#endif
 
 int cam_flash_led_prepare(struct led_trigger *trigger, int options,
 	int *max_current, bool is_wled)
@@ -366,6 +396,195 @@ end:
 	return rc;
 }
 
+#if IS_REACHABLE(CONFIG_LEDS_S2MPB02)
+int cam_flash_off(struct cam_flash_ctrl *flash_ctrl)
+{
+	if (!flash_ctrl) {
+		CAM_ERR(CAM_FLASH, "Flash control Null");
+		return -EINVAL;
+	}
+
+	CAM_INFO(CAM_FLASH, "CAM Flash OFF");
+	s2mpb02_led_en(S2MPB02_FLASH_LED_1, 0, S2MPB02_LED_TURN_WAY_I2C);/* flash, off */
+	s2mpb02_led_en(S2MPB02_TORCH_LED_1, 0, S2MPB02_LED_TURN_WAY_I2C);/* torch, off */
+
+	flash_ctrl->flash_state = CAM_FLASH_STATE_START;
+	return 0;
+}
+
+static int cam_flash_low(
+	struct cam_flash_ctrl *flash_ctrl,
+	struct cam_flash_frame_setting *flash_data)
+{
+	int rc = 0;
+
+	if (!flash_data) {
+		CAM_ERR(CAM_FLASH, "Flash Data Null");
+		return -EINVAL;
+	}
+
+	CAM_INFO(CAM_FLASH, "CAM Low Flash ON");
+	rc = s2mpb02_led_en(S2MPB02_TORCH_LED_1, S2MPB02_TORCH_OUT_I_280MA, S2MPB02_LED_TURN_WAY_I2C);/* low, on */
+	if (rc)
+		CAM_ERR(CAM_FLASH, "Fire Low Flash failed: %d", rc);
+
+	return rc;
+}
+
+static int cam_flash_duration(struct cam_flash_ctrl *fctrl,
+	struct cam_flash_frame_setting *flash_data)
+{
+	int i = 0, rc = 0;
+
+	if (!flash_data) {
+		CAM_ERR(CAM_FLASH, "Flash Data NULL");
+		return -EINVAL;
+	}
+
+	for (i = 0; i < fctrl->torch_num_sources; i++)
+		if (fctrl->torch_trigger[i])
+			cam_res_mgr_led_trigger_event(
+				fctrl->torch_trigger[i],
+				LED_OFF);
+
+	if (rc)
+		CAM_ERR(CAM_FLASH, "Fire PreciseFlash Failed: %d", rc);
+
+	return rc;
+}
+
+static int cam_flash_high(
+	struct cam_flash_ctrl *flash_ctrl,
+	struct cam_flash_frame_setting *flash_data)
+{
+	int rc = 0;
+
+	if (flash_data->led_current_ma[0] == 100) {
+		rc = s2mpb02_led_en(S2MPB02_TORCH_LED_1, S2MPB02_TORCH_OUT_I_120MA, S2MPB02_LED_TURN_WAY_I2C);/* low, on */
+	}
+	else if (flash_data->led_current_ma[0] == 240) {
+		rc = s2mpb02_led_en(S2MPB02_TORCH_LED_1, S2MPB02_TORCH_OUT_I_280MA, S2MPB02_LED_TURN_WAY_I2C);/* low, on */
+	}
+	else {
+		rc = s2mpb02_led_en(S2MPB02_FLASH_LED_1, S2MPB02_FLASH_OUT_I_1400MA, S2MPB02_LED_TURN_WAY_I2C);/* low, on */
+	}
+
+	CAM_INFO(CAM_FLASH, "CAM Flash ON");
+	if (rc)
+		CAM_ERR(CAM_FLASH, "Fire Flash Failed: %d", rc);
+
+	return rc;
+}
+
+static int cam_flash_torch(
+	struct cam_flash_ctrl *flash_ctrl,
+	struct cam_flash_frame_setting *flash_data)
+{
+	int rc = 0;
+
+	if (!flash_data) {
+		CAM_ERR(CAM_FLASH, "Flash Data Null");
+		return -EINVAL;
+	}
+
+	CAM_INFO(CAM_FLASH, "CAM Torch Flash ON, %d mA", flash_data->led_current_ma[0]);
+	if (flash_data->led_current_ma[0] == 60) {
+		rc = s2mpb02_led_en(S2MPB02_TORCH_LED_1, S2MPB02_TORCH_OUT_I_60MA, S2MPB02_LED_TURN_WAY_I2C);/* torch, on */
+	} else if (flash_data->led_current_ma[0] == 140) {
+		rc = s2mpb02_led_en(S2MPB02_TORCH_LED_1, S2MPB02_TORCH_OUT_I_120MA, S2MPB02_LED_TURN_WAY_I2C);/* torch, on */
+	} else {
+		rc = s2mpb02_led_en(S2MPB02_TORCH_LED_1, S2MPB02_TORCH_OUT_I_220MA, S2MPB02_LED_TURN_WAY_I2C);/* torch, on */
+	}
+
+	if (rc)
+		CAM_ERR(CAM_FLASH, "Fire Torch failed: %d", rc);
+
+	return rc;
+}
+#elif defined(CONFIG_LEDS_KTD2692)
+int cam_flash_off(struct cam_flash_ctrl *flash_ctrl)
+{
+	if (!flash_ctrl) {
+		CAM_ERR(CAM_FLASH, "Flash control Null");
+		return -EINVAL;
+	}
+
+	CAM_INFO(CAM_FLASH, "CAM Flash OFF");
+	ktd2692_led_mode_ctrl(KTD2692_DISABLES_TORCH_FLASH_MODE, 0);
+
+	flash_ctrl->flash_state = CAM_FLASH_STATE_START;
+	return 0;
+}
+
+static int cam_flash_low(
+	struct cam_flash_ctrl *flash_ctrl,
+	struct cam_flash_frame_setting *flash_data)
+{
+	int rc = 0;
+
+	if (!flash_data) {
+		CAM_ERR(CAM_FLASH, "Flash Data Null");
+		return -EINVAL;
+	}
+
+	CAM_INFO(CAM_FLASH, "CAM Low Flash ON");
+	rc =  ktd2692_led_mode_ctrl(KTD2692_ENABLE_TORCH_MODE, 200);
+	if (rc)
+		CAM_ERR(CAM_FLASH, "Fire Low Flash failed: %d", rc);
+
+	return rc;
+}
+
+static int cam_flash_high(
+	struct cam_flash_ctrl *flash_ctrl,
+	struct cam_flash_frame_setting *flash_data)
+{
+	int rc = 0;
+
+	if (flash_data->led_current_ma[0] == 100) {
+		rc =  ktd2692_led_mode_ctrl(KTD2692_ENABLE_TORCH_MODE, 125);
+	}
+	else if (flash_data->led_current_ma[0] == 240) {
+		rc =  ktd2692_led_mode_ctrl(KTD2692_ENABLE_TORCH_MODE, 225);
+	}
+	else {
+		rc = ktd2692_led_mode_ctrl(KTD2692_ENABLE_FLASH_MODE, 1400);
+	}
+
+	CAM_INFO(CAM_FLASH, "CAM Flash ON, current = %d",flash_data->led_current_ma[0]);
+	if (rc)
+		CAM_ERR(CAM_FLASH, "Fire Flash Failed: %d", rc);
+
+	return rc;
+}
+
+static int cam_flash_torch(
+	struct cam_flash_ctrl *flash_ctrl,
+	struct cam_flash_frame_setting *flash_data)
+{
+	int rc = 0;
+
+	if (!flash_data) {
+		CAM_ERR(CAM_FLASH, "Flash Data Null");
+		return -EINVAL;
+	}
+
+	CAM_INFO(CAM_FLASH, "CAM Torch Flash ON, %d mA", flash_data->led_current_ma[0]);
+
+	if (flash_data->led_current_ma[0] == 60) {
+		rc =  ktd2692_led_mode_ctrl(KTD2692_ENABLE_TORCH_MODE, 50);
+	} else if (flash_data->led_current_ma[0] == 140) {
+		rc =  ktd2692_led_mode_ctrl(KTD2692_ENABLE_TORCH_MODE, 100);
+	} else {
+		rc =  ktd2692_led_mode_ctrl(KTD2692_ENABLE_TORCH_MODE, 175);
+	}
+
+	if (rc)
+		CAM_ERR(CAM_FLASH, "Fire Torch failed: %d", rc);
+
+	return rc;
+}
+#else
 static int cam_flash_ops(struct cam_flash_ctrl *flash_ctrl,
 	struct cam_flash_frame_setting *flash_data, enum camera_flash_opcode op)
 {
@@ -391,7 +610,7 @@ static int cam_flash_ops(struct cam_flash_ctrl *flash_ctrl,
 				else
 					curr = max_current;
 			}
-			CAM_DBG(CAM_FLASH, "Led_Torch[%d]: Current: %d",
+			CAM_INFO(CAM_FLASH, "Led_Torch[%d]: Current: %d",
 				i, curr);
 			cam_res_mgr_led_trigger_event(
 				flash_ctrl->torch_trigger[i], curr);
@@ -407,7 +626,7 @@ static int cam_flash_ops(struct cam_flash_ctrl *flash_ctrl,
 				else
 					curr = max_current;
 			}
-			CAM_DBG(CAM_FLASH, "LED_Flash[%d]: Current: %d",
+			CAM_INFO(CAM_FLASH, "LED_Flash[%d]: Current: %d",
 				i, curr);
 			cam_res_mgr_led_trigger_event(
 				flash_ctrl->flash_trigger[i], curr);
@@ -427,7 +646,7 @@ static int cam_flash_ops(struct cam_flash_ctrl *flash_ctrl,
 			param.off_time_ms =
 				flash_data->flash_active_time_ms;
 			param.on_time_ms = flash_data->flash_on_wait_time_ms;
-			CAM_DBG(CAM_FLASH,
+			CAM_INFO(CAM_FLASH,
 				"Precise flash_on time: %u, Precise flash_off time: %u",
 				param.on_time_ms, param.off_time_ms);
 			rc = qti_flash_led_set_param(
@@ -455,8 +674,6 @@ static int cam_flash_ops(struct cam_flash_ctrl *flash_ctrl,
 
 int cam_flash_off(struct cam_flash_ctrl *flash_ctrl)
 {
-	int rc = 0;
-
 	if (!flash_ctrl) {
 		CAM_ERR(CAM_FLASH, "Flash control Null");
 		return -EINVAL;
@@ -465,18 +682,23 @@ int cam_flash_off(struct cam_flash_ctrl *flash_ctrl)
 	if (flash_ctrl->switch_trigger)
 		cam_res_mgr_led_trigger_event(flash_ctrl->switch_trigger,
 			(enum led_brightness)LED_SWITCH_OFF);
-
-	if ((flash_ctrl->i2c_data.streamoff_settings.is_settings_valid) &&
-		(flash_ctrl->i2c_data.streamoff_settings.request_id == 0)) {
-		flash_ctrl->apply_streamoff = true;
-		rc = cam_flash_i2c_apply_setting(flash_ctrl, 0);
-		if (rc < 0) {
-			CAM_ERR(CAM_SENSOR,
-			"cannot apply streamoff settings");
-		}
-	}
-	return rc;
+	return 0;
 }
+
+#if defined(CONFIG_SAMSUNG_PMIC_FLASH)
+int cam_torch_off(struct cam_flash_ctrl *flash_ctrl)
+{
+	if (!flash_ctrl) {
+		CAM_ERR(CAM_FLASH, "Flash control Null");
+		return -EINVAL;
+	}
+
+	if (flash_ctrl->switch_trigger)
+		cam_res_mgr_led_trigger_event(flash_ctrl->switch_trigger,
+			(enum led_brightness)LED_SWITCH_OFF);
+	return 0;
+}
+#endif
 
 static int cam_flash_low(
 	struct cam_flash_ctrl *flash_ctrl,
@@ -494,6 +716,17 @@ static int cam_flash_low(
 			cam_res_mgr_led_trigger_event(
 				flash_ctrl->flash_trigger[i],
 				LED_OFF);
+
+#if defined(CONFIG_SAMSUNG_PMIC_FLASH)
+	if ((flash_data->led_current_ma[0] != 0) || (flash_data->led_current_ma[1] != 0)) {
+		uint32_t temp = (flash_data->led_current_ma[0] + flash_data->led_current_ma[1])
+			/ CAM_FLASH_MAX_LED_TRIGGERS;
+
+		for (i = 0; i < CAM_FLASH_MAX_LED_TRIGGERS; i++) {
+			flash_data->led_current_ma[i] = temp;
+		}
+	}
+#endif
 
 	rc = cam_flash_ops(flash_ctrl, flash_data,
 		CAMERA_SENSOR_FLASH_OP_FIRELOW);
@@ -519,6 +752,17 @@ static int cam_flash_high(
 			cam_res_mgr_led_trigger_event(
 				flash_ctrl->torch_trigger[i],
 				LED_OFF);
+
+#if defined(CONFIG_SAMSUNG_PMIC_FLASH)
+	if ((flash_data->led_current_ma[0] != 0) || (flash_data->led_current_ma[1] != 0)) {
+		uint32_t temp = (flash_data->led_current_ma[0] + flash_data->led_current_ma[1])
+			/ CAM_FLASH_MAX_LED_TRIGGERS;
+
+		for (i = 0; i < CAM_FLASH_MAX_LED_TRIGGERS; i++) {
+				flash_data->led_current_ma[i] = temp;
+		}
+	}
+#endif
 
 	rc = cam_flash_ops(flash_ctrl, flash_data,
 		CAMERA_SENSOR_FLASH_OP_FIREHIGH);
@@ -551,6 +795,7 @@ static int cam_flash_duration(struct cam_flash_ctrl *fctrl,
 
 	return rc;
 }
+#endif
 
 static int cam_flash_i2c_delete_req(struct cam_flash_ctrl *fctrl,
 	uint64_t req_id)
@@ -584,26 +829,11 @@ static int cam_flash_i2c_delete_req(struct cam_flash_ctrl *fctrl,
 
 		CAM_DBG(CAM_FLASH, "top: %llu, del_req_id:%llu",
 			top, del_req_id);
-
-		for (i = 0; i < MAX_PER_FRAME_ARRAY; i++) {
-			if ((del_req_id >
-				 fctrl->i2c_data.per_frame[i].request_id) && (
-				 fctrl->i2c_data.per_frame[i].is_settings_valid
-					== 1)) {
-				fctrl->i2c_data.per_frame[i].request_id = 0;
-				rc = delete_request(
-					&(fctrl->i2c_data.per_frame[i]));
-				if (rc < 0)
-					CAM_ERR(CAM_SENSOR,
-						"Delete request Fail:%lld rc:%d",
-						del_req_id, rc);
-			}
-		}
 	}
 
 	cam_flash_i2c_flush_nrt(fctrl);
 
-	return rc;
+	return 0;
 }
 
 static int cam_flash_pmic_delete_req(struct cam_flash_ctrl *fctrl,
@@ -699,28 +929,9 @@ int cam_flash_i2c_apply_setting(struct cam_flash_ctrl *fctrl,
 	struct i2c_settings_array *i2c_set = NULL;
 	int frame_offset = 0, rc = 0;
 
-	if (!fctrl) {
-		CAM_ERR(CAM_FLASH, "fctrl is NULL");
-		return -EINVAL;
-	}
 	if (req_id == 0) {
 		/* NonRealTime Init settings*/
-		if (fctrl->apply_streamoff == true) {
-			fctrl->apply_streamoff = false;
-			i2c_set = &fctrl->i2c_data.streamoff_settings;
-			list_for_each_entry(i2c_list,
-				&(i2c_set->list_head),
-				list) {
-				rc = cam_sensor_util_i2c_apply_setting
-					(&(fctrl->io_master_info), i2c_list);
-				if (rc) {
-					CAM_ERR(CAM_FLASH,
-					"Failed to apply stream on settings: %d", rc);
-					return rc;
-				}
-				break;
-			}
-		} else if (fctrl->i2c_data.init_settings.is_settings_valid == true) {
+		if (fctrl->i2c_data.init_settings.is_settings_valid == true) {
 			list_for_each_entry(i2c_list,
 				&(fctrl->i2c_data.init_settings.list_head),
 				list) {
@@ -835,6 +1046,29 @@ int cam_flash_pmic_apply_setting(struct cam_flash_ctrl *fctrl,
 					return rc;
 				}
 			}
+#if defined(CONFIG_SAMSUNG_PMIC_FLASH)
+			if (flash_data->opcode ==
+				CAMERA_SENSOR_FLASH_OP_FIRETORCH) {
+				rc = cam_flash_low(fctrl, flash_data);
+				if (rc) {
+					CAM_ERR(CAM_FLASH,
+						"Torch ON failed : %d",
+						rc);
+					return -EINVAL;
+				}
+			}
+#elif IS_REACHABLE(CONFIG_LEDS_S2MPB02)
+			if (flash_data->opcode ==
+				CAMERA_SENSOR_FLASH_OP_FIRETORCH) {
+				rc = cam_flash_torch(fctrl, flash_data);
+				if (rc) {
+					CAM_ERR(CAM_FLASH,
+						"Torch ON failed : %d",
+						rc);
+					return -EINVAL;
+				}
+			}
+#endif
 		} else if (fctrl->nrt_info.cmn_attr.cmd_type ==
 			CAMERA_SENSOR_FLASH_CMD_TYPE_WIDGET) {
 			flash_data = &fctrl->nrt_info;
@@ -859,6 +1093,26 @@ int cam_flash_pmic_apply_setting(struct cam_flash_ctrl *fctrl,
 					"LED off failed: %d",
 					rc);
 			}
+#if defined(CONFIG_SAMSUNG_PMIC_FLASH)
+			if (flash_data->opcode ==
+				CAMERA_SENSOR_FLASH_OP_FIRETORCH) {
+				rc = cam_flash_low(fctrl, flash_data);
+				if (rc)
+					CAM_ERR(CAM_FLASH,
+						"TORCH ON failed : %d", rc);
+			}
+#elif IS_REACHABLE(CONFIG_LEDS_S2MPB02)
+			if (flash_data->opcode ==
+				CAMERA_SENSOR_FLASH_OP_FIRETORCH) {
+				rc = cam_flash_torch(fctrl, flash_data);
+				if (rc) {
+					CAM_ERR(CAM_FLASH,
+						"Torch ON failed : %d",
+						rc);
+					return -EINVAL;
+				}
+			}
+#endif
 		} else if (fctrl->nrt_info.cmn_attr.cmd_type ==
 			CAMERA_SENSOR_FLASH_CMD_TYPE_RER) {
 			flash_data = &fctrl->nrt_info;
@@ -922,7 +1176,41 @@ int cam_flash_pmic_apply_setting(struct cam_flash_ctrl *fctrl,
 					goto apply_setting_err;
 				}
 			}
-		} else if ((flash_data->opcode ==
+		}
+#if defined(CONFIG_SAMSUNG_PMIC_FLASH)
+		else if ((flash_data->opcode ==
+			CAMERA_SENSOR_FLASH_OP_FIRETORCH) &&
+			(flash_data->cmn_attr.is_settings_valid) &&
+			(flash_data->cmn_attr.request_id == req_id)) {
+			/* Turn On Torch */
+			if (fctrl->flash_state == CAM_FLASH_STATE_START) {
+				rc = cam_flash_low(fctrl, flash_data);
+				if (rc) {
+					CAM_ERR(CAM_FLASH,
+						"Torch ON failed: rc= %d",
+						rc);
+					goto apply_setting_err;
+				}
+			}
+		}
+#elif IS_REACHABLE(CONFIG_LEDS_S2MPB02)
+		else if ((flash_data->opcode ==
+			CAMERA_SENSOR_FLASH_OP_FIRETORCH) &&
+			(flash_data->cmn_attr.is_settings_valid) &&
+			(flash_data->cmn_attr.request_id == req_id)) {
+			/* Turn On Torch */
+			if (fctrl->flash_state == CAM_FLASH_STATE_START) {
+				rc = cam_flash_torch(fctrl, flash_data);
+				if (rc) {
+					CAM_ERR(CAM_FLASH,
+						"Torch ON failed: rc= %d",
+						rc);
+					goto apply_setting_err;
+				}
+			}
+		}
+#endif
+		else if ((flash_data->opcode ==
 			CAMERA_SENSOR_FLASH_OP_FIRELOW) &&
 			(flash_data->cmn_attr.is_settings_valid) &&
 			(flash_data->cmn_attr.request_id == req_id)) {
@@ -979,12 +1267,9 @@ int cam_flash_i2c_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 	int rc = 0, i = 0;
 	uintptr_t generic_ptr;
 	uint32_t total_cmd_buf_in_bytes = 0;
-	uint32_t processed_cmd_buf_in_bytes = 0;
-	uint16_t cmd_length_in_bytes = 0;
 	uint32_t *cmd_buf =  NULL;
 	uint32_t *offset = NULL;
 	uint32_t frm_offset = 0;
-	uint32_t csl_req_id = 0;
 	size_t len_of_buffer;
 	size_t remain_len;
 	struct cam_flash_init *flash_init = NULL;
@@ -1024,7 +1309,6 @@ int cam_flash_i2c_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 		CAM_ERR(CAM_FLASH,
 			"Inval cam_packet strut size: %zu, len_of_buff: %zu",
 			 sizeof(struct cam_packet), len_of_buffer);
-		cam_mem_put_cpu_buf(config.packet_handle);
 		return -EINVAL;
 	}
 
@@ -1035,13 +1319,6 @@ int cam_flash_i2c_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 	if (cam_packet_util_validate_packet(csl_packet,
 		remain_len)) {
 		CAM_ERR(CAM_FLASH, "Invalid packet params");
-		cam_mem_put_cpu_buf(config.packet_handle);
-		return -EINVAL;
-	}
-
-	if (!csl_packet->num_cmd_buf) {
-		CAM_ERR(CAM_FLASH, "Invalid num_cmd_buffer = %d",
-			csl_packet->num_cmd_buf);
 		return -EINVAL;
 	}
 
@@ -1052,47 +1329,33 @@ int cam_flash_i2c_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 		CAM_DBG(CAM_FLASH,
 			"reject request %lld, last request to flush %lld",
 			csl_packet->header.request_id, fctrl->last_flush_req);
-		cam_mem_put_cpu_buf(config.packet_handle);
 		return -EBADR;
 	}
 
 	if (csl_packet->header.request_id > fctrl->last_flush_req)
 		fctrl->last_flush_req = 0;
 
-	offset = (uint32_t *)((uint8_t *)&csl_packet->payload +
-		csl_packet->cmd_buf_offset);
-	cmd_desc = (struct cam_cmd_buf_desc *)(offset);
-	rc = cam_packet_util_validate_cmd_desc(cmd_desc);
-	if (rc) {
-		CAM_ERR(CAM_FLASH, "Invalid cmd desc ret: %d", rc);
-		return rc;
-	}
-
 	switch (csl_packet->header.op_code & 0xFFFFFF) {
 	case CAM_FLASH_PACKET_OPCODE_INIT: {
 		/* INIT packet*/
+		offset = (uint32_t *)((uint8_t *)&csl_packet->payload +
+			csl_packet->cmd_buf_offset);
+		cmd_desc = (struct cam_cmd_buf_desc *)(offset);
+
 		/* Loop through multiple command buffers */
 		for (i = 1; i < csl_packet->num_cmd_buf; i++) {
-			rc = cam_packet_util_validate_cmd_desc(&cmd_desc[i]);
-			if (rc)
-				return rc;
-
 			total_cmd_buf_in_bytes = cmd_desc[i].length;
-			processed_cmd_buf_in_bytes = 0;
 			if (!total_cmd_buf_in_bytes)
 				continue;
 			rc = cam_mem_get_cpu_buf(cmd_desc[i].mem_handle,
 				&generic_ptr, &len_of_buffer);
 			if (rc < 0) {
-				cam_mem_put_cpu_buf(config.packet_handle);
 				CAM_ERR(CAM_FLASH, "Failed to get cpu buf");
 				return rc;
 			}
 			cmd_buf = (uint32_t *)generic_ptr;
 			if (!cmd_buf) {
 				CAM_ERR(CAM_FLASH, "invalid cmd buf");
-				cam_mem_put_cpu_buf(cmd_desc[i].mem_handle);
-				cam_mem_put_cpu_buf(config.packet_handle);
 				return -EINVAL;
 			}
 
@@ -1100,38 +1363,25 @@ int cam_flash_i2c_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 				(cmd_desc[i].offset >
 				(len_of_buffer -
 				sizeof(struct common_header)))) {
-				cam_mem_put_cpu_buf(cmd_desc[i].mem_handle);
-				cam_mem_put_cpu_buf(config.packet_handle);
 				CAM_ERR(CAM_FLASH, "invalid cmd buf length");
 				return -EINVAL;
 			}
 			remain_len = len_of_buffer - cmd_desc[i].offset;
-			cmd_buf += cmd_desc[i].offset / sizeof(uint32_t);
 			cmn_hdr = (struct common_header *)cmd_buf;
 
-			/* Loop through cmd formats in one cmd buffer */
 			CAM_DBG(CAM_FLASH,
-				"command Type: %d,Processed: %d,Total: %d",
-				cmn_hdr->cmd_type, processed_cmd_buf_in_bytes,
-				total_cmd_buf_in_bytes);
+				"command type: %d, total size: %d",
+				cmn_hdr->cmd_type, total_cmd_buf_in_bytes);
 			switch (cmn_hdr->cmd_type) {
 			case CAMERA_SENSOR_FLASH_CMD_TYPE_INIT_INFO:
 				if (len_of_buffer <
 					sizeof(struct cam_flash_init)) {
 					CAM_ERR(CAM_FLASH, "Not enough buffer");
-					cam_mem_put_cpu_buf(cmd_desc[i].mem_handle);
-					cam_mem_put_cpu_buf(config.packet_handle);
 					return -EINVAL;
 				}
 
 				flash_init = (struct cam_flash_init *)cmd_buf;
 				fctrl->flash_type = flash_init->flash_type;
-				cmd_length_in_bytes =
-					sizeof(struct cam_flash_init);
-				processed_cmd_buf_in_bytes +=
-					cmd_length_in_bytes;
-				cmd_buf += cmd_length_in_bytes/
-						sizeof(uint32_t);
 				break;
 			case CAMERA_SENSOR_CMD_TYPE_I2C_INFO:
 				rc = cam_flash_slaveInfo_pkt_parser(
@@ -1140,36 +1390,20 @@ int cam_flash_i2c_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 					CAM_ERR(CAM_FLASH,
 					"Failed parsing slave info: rc: %d",
 					rc);
-					cam_mem_put_cpu_buf(cmd_desc[i].mem_handle);
-					cam_mem_put_cpu_buf(config.packet_handle);
 					return rc;
 				}
-				cmd_length_in_bytes =
-					sizeof(struct cam_cmd_i2c_info);
-				processed_cmd_buf_in_bytes +=
-					cmd_length_in_bytes;
-				cmd_buf += cmd_length_in_bytes/
-						sizeof(uint32_t);
 				break;
 			case CAMERA_SENSOR_CMD_TYPE_PWR_UP:
 			case CAMERA_SENSOR_CMD_TYPE_PWR_DOWN:
 				CAM_DBG(CAM_FLASH,
 					"Received power settings");
-				cmd_length_in_bytes =
-					total_cmd_buf_in_bytes;
 				rc = cam_sensor_update_power_settings(
 					cmd_buf,
 					total_cmd_buf_in_bytes,
 					&fctrl->power_info, remain_len);
-				processed_cmd_buf_in_bytes +=
-					cmd_length_in_bytes;
-				cmd_buf += cmd_length_in_bytes/
-						sizeof(uint32_t);
 				if (rc) {
 					CAM_ERR(CAM_FLASH,
 					"Failed update power settings");
-					cam_mem_put_cpu_buf(cmd_desc[i].mem_handle);
-					cam_mem_put_cpu_buf(config.packet_handle);
 					return rc;
 				}
 				break;
@@ -1189,25 +1423,14 @@ int cam_flash_i2c_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 				if (rc < 0) {
 					CAM_ERR(CAM_FLASH,
 					"pkt parsing failed: %d", rc);
-					cam_mem_put_cpu_buf(cmd_desc[i].mem_handle);
-					cam_mem_put_cpu_buf(config.packet_handle);
 					return rc;
 				}
-				cmd_length_in_bytes =
-					cmd_desc[i].length;
-				processed_cmd_buf_in_bytes +=
-					cmd_length_in_bytes;
-				cmd_buf += cmd_length_in_bytes/
-						sizeof(uint32_t);
-
 				break;
 			}
-			cam_mem_put_cpu_buf(cmd_desc[i].mem_handle);
 		}
 		power_info = &fctrl->power_info;
 		if (!power_info) {
 			CAM_ERR(CAM_FLASH, "Power_info is NULL");
-			cam_mem_put_cpu_buf(config.packet_handle);
 			return -EINVAL;
 		}
 
@@ -1219,7 +1442,6 @@ int cam_flash_i2c_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 			CAM_ERR(CAM_FLASH,
 				"failed to fill vreg params for power up rc:%d",
 				rc);
-			cam_mem_put_cpu_buf(config.packet_handle);
 			return rc;
 		}
 
@@ -1232,7 +1454,6 @@ int cam_flash_i2c_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 			CAM_ERR(CAM_FLASH,
 				"failed to fill vreg params power down rc:%d",
 				rc);
-			cam_mem_put_cpu_buf(config.packet_handle);
 			return rc;
 		}
 
@@ -1240,14 +1461,12 @@ int cam_flash_i2c_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 		if (rc) {
 			CAM_ERR(CAM_FLASH,
 				"Enable Regulator Failed rc = %d", rc);
-			cam_mem_put_cpu_buf(config.packet_handle);
 			return rc;
 		}
 
 		rc = fctrl->func_tbl.apply_setting(fctrl, 0);
 		if (rc) {
 			CAM_ERR(CAM_FLASH, "cannot apply settings rc = %d", rc);
-			cam_mem_put_cpu_buf(config.packet_handle);
 			return rc;
 		}
 
@@ -1255,9 +1474,10 @@ int cam_flash_i2c_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 		break;
 	}
 	case CAM_FLASH_PACKET_OPCODE_SET_OPS: {
+		offset = (uint32_t *)((uint8_t *)&csl_packet->payload +
+			csl_packet->cmd_buf_offset);
 		frm_offset = csl_packet->header.request_id %
 			MAX_PER_FRAME_ARRAY;
-		csl_req_id = csl_packet->header.request_id;
 		/* add support for handling i2c_data*/
 		i2c_reg_settings =
 			&fctrl->i2c_data.per_frame[frm_offset];
@@ -1269,59 +1489,20 @@ int cam_flash_i2c_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 		i2c_reg_settings->is_settings_valid = true;
 		i2c_reg_settings->request_id =
 			csl_packet->header.request_id;
+		cmd_desc = (struct cam_cmd_buf_desc *)(offset);
 		rc = cam_sensor_i2c_command_parser(
 			&fctrl->io_master_info,
 			i2c_reg_settings, cmd_desc, 1, NULL);
 		if (rc) {
 			CAM_ERR(CAM_FLASH,
 			"Failed in parsing i2c packets");
-			cam_mem_put_cpu_buf(config.packet_handle);
-			return rc;
-		}
-		if ((fctrl->flash_state == CAM_FLASH_STATE_ACQUIRE) ||
-			(fctrl->flash_state == CAM_FLASH_STATE_CONFIG)) {
-			fctrl->flash_state = CAM_FLASH_STATE_CONFIG;
-			rc = fctrl->func_tbl.apply_setting(fctrl, csl_req_id);
-			if (rc) {
-				CAM_ERR(CAM_FLASH, "cannot apply fire settings rc = %d", rc);
-				return rc;
-			}
 			return rc;
 		}
 		break;
 	}
-	case CAM_FLASH_PACKET_OPCODE_INIT_FIRE: {
-		frm_offset = csl_packet->header.request_id %
-			MAX_PER_FRAME_ARRAY;
-		csl_req_id = csl_packet->header.request_id;
-		CAM_DBG(CAM_FLASH, "Flash pkt init fire opcode received");
-		/* add support for handling i2c_data*/
-		i2c_reg_settings =
-			&fctrl->i2c_data.per_frame[frm_offset];
-		if (i2c_reg_settings->is_settings_valid == true) {
-			i2c_reg_settings->request_id = 0;
-			i2c_reg_settings->is_settings_valid = false;
-			goto update_req_mgr;
-		}
-		i2c_reg_settings->is_settings_valid = true;
-		i2c_reg_settings->request_id =
-			csl_packet->header.request_id;
-		rc = cam_sensor_i2c_command_parser(
-			&fctrl->io_master_info,
-			i2c_reg_settings, cmd_desc, 1, NULL);
-		if (rc) {
-			CAM_ERR(CAM_FLASH,
-			"Failed in parsing i2c packets");
-			return rc;
-		}
-
-		/* Apply the settings immediately as it is an EPR Req*/
-		rc = fctrl->func_tbl.apply_setting(fctrl, csl_req_id);
-		if (rc)
-			CAM_ERR(CAM_FLASH, "cannot apply init fire cmd rc = %d", rc);
-		return rc;
-	}
 	case CAM_FLASH_PACKET_OPCODE_NON_REALTIME_SET_OPS: {
+		offset = (uint32_t *)((uint8_t *)&csl_packet->payload +
+			csl_packet->cmd_buf_offset);
 
 		/* add support for handling i2c_data*/
 		i2c_reg_settings = &fctrl->i2c_data.config_settings;
@@ -1333,32 +1514,28 @@ int cam_flash_i2c_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 			if (rc) {
 				CAM_ERR(CAM_FLASH,
 				"Failed in Deleting the err: %d", rc);
-				cam_mem_put_cpu_buf(config.packet_handle);
 				return rc;
 			}
 		}
 		i2c_reg_settings->is_settings_valid = true;
 		i2c_reg_settings->request_id =
 			csl_packet->header.request_id;
+		cmd_desc = (struct cam_cmd_buf_desc *)(offset);
 		rc = cam_sensor_i2c_command_parser(
 			&fctrl->io_master_info,
 			i2c_reg_settings, cmd_desc, 1, NULL);
 		if (rc) {
 			CAM_ERR(CAM_FLASH,
 			"Failed in parsing i2c NRT packets");
-			cam_mem_put_cpu_buf(config.packet_handle);
 			return rc;
 		}
 		rc = fctrl->func_tbl.apply_setting(fctrl, 0);
 		if (rc)
 			CAM_ERR(CAM_FLASH,
 			"Apply setting failed: %d", rc);
-		cam_mem_put_cpu_buf(config.packet_handle);
 		return rc;
 	}
 	case CAM_PKT_NOP_OPCODE: {
-		frm_offset = csl_packet->header.request_id %
-			MAX_PER_FRAME_ARRAY;
 		if ((fctrl->flash_state == CAM_FLASH_STATE_INIT) ||
 			(fctrl->flash_state == CAM_FLASH_STATE_ACQUIRE)) {
 			CAM_WARN(CAM_FLASH,
@@ -1367,46 +1544,16 @@ int cam_flash_i2c_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 				MAX_PER_FRAME_ARRAY;
 			fctrl->i2c_data.per_frame[frm_offset].is_settings_valid
 				= false;
-			cam_mem_put_cpu_buf(config.packet_handle);
 			return 0;
 		}
-		i2c_reg_settings =
-			&fctrl->i2c_data.per_frame[frm_offset];
-		i2c_reg_settings->is_settings_valid = true;
-		i2c_reg_settings->request_id =
-			csl_packet->header.request_id;
 
 		CAM_DBG(CAM_FLASH, "NOP Packet is Received: req_id: %u",
 			csl_packet->header.request_id);
 		goto update_req_mgr;
 	}
-	case CAM_FLASH_PACKET_OPCODE_STREAM_OFF: {
-		if (fctrl->streamoff_count > 0)
-			return rc;
-
-		CAM_DBG(CAM_FLASH, "Received Stream off Settings");
-		i2c_data = &(fctrl->i2c_data);
-		fctrl->streamoff_count = fctrl->streamoff_count + 1;
-		i2c_reg_settings       = &i2c_data->streamoff_settings;
-		i2c_reg_settings->request_id = 0;
-		i2c_reg_settings->is_settings_valid = 1;
-		offset = (uint32_t *)((uint8_t *)&csl_packet->payload +
-			csl_packet->cmd_buf_offset);
-		cmd_desc = (struct cam_cmd_buf_desc *)(offset);
-		rc = cam_sensor_i2c_command_parser(&fctrl->io_master_info,
-				i2c_reg_settings,
-				cmd_desc, 1, NULL);
-		if (rc) {
-			CAM_ERR(CAM_FLASH,
-			"Failed in parsing i2c Stream off packets");
-			return rc;
-		}
-		break;
-	}
 	default:
 		CAM_ERR(CAM_FLASH, "Wrong Opcode : %d",
 			(csl_packet->header.op_code & 0xFFFFFF));
-		cam_mem_put_cpu_buf(config.packet_handle);
 		return -EINVAL;
 	}
 update_req_mgr:
@@ -1437,7 +1584,6 @@ update_req_mgr:
 					CAM_ERR(CAM_FLASH,
 						"Failed in adding request: %llu to request manager",
 						csl_packet->header.request_id);
-				cam_mem_put_cpu_buf(config.packet_handle);
 				return rc;
 			}
 			CAM_DBG(CAM_FLASH,
@@ -1445,7 +1591,6 @@ update_req_mgr:
 				add_req.req_id, add_req.trigger_eof);
 		}
 	}
-	cam_mem_put_cpu_buf(config.packet_handle);
 	return rc;
 }
 
@@ -1504,7 +1649,6 @@ int cam_flash_pmic_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 		CAM_ERR(CAM_FLASH,
 			"Inval cam_packet strut size: %zu, len_of_buff: %zu",
 			 sizeof(struct cam_packet), len_of_buffer);
-		cam_mem_put_cpu_buf(config.packet_handle);
 		rc = -EINVAL;
 		return rc;
 	}
@@ -1516,7 +1660,6 @@ int cam_flash_pmic_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 	if (cam_packet_util_validate_packet(csl_packet,
 		remain_len)) {
 		CAM_ERR(CAM_FLASH, "Invalid packet params");
-		cam_mem_put_cpu_buf(config.packet_handle);
 		rc = -EINVAL;
 		return rc;
 	}
@@ -1528,7 +1671,6 @@ int cam_flash_pmic_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 		CAM_WARN(CAM_FLASH,
 			"reject request %lld, last request to flush %d",
 			csl_packet->header.request_id, fctrl->last_flush_req);
-		cam_mem_put_cpu_buf(config.packet_handle);
 		rc = -EINVAL;
 		return rc;
 	}
@@ -1536,30 +1678,21 @@ int cam_flash_pmic_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 	if (csl_packet->header.request_id > fctrl->last_flush_req)
 		fctrl->last_flush_req = 0;
 
-	offset = (uint32_t *)((uint8_t *)&csl_packet->payload +
-		csl_packet->cmd_buf_offset);
-	cmd_desc = (struct cam_cmd_buf_desc *)(offset);
-	rc = cam_packet_util_validate_cmd_desc(cmd_desc);
-	if (rc) {
-		CAM_ERR(CAM_FLASH, "Invalid cmd desc ret: %d", rc);
-		return rc;
-	}
-
 	switch (csl_packet->header.op_code & 0xFFFFFF) {
 	case CAM_FLASH_PACKET_OPCODE_INIT: {
 		/* INIT packet*/
+		offset = (uint32_t *)((uint8_t *)&csl_packet->payload +
+			csl_packet->cmd_buf_offset);
+		cmd_desc = (struct cam_cmd_buf_desc *)(offset);
 		rc = cam_mem_get_cpu_buf(cmd_desc->mem_handle,
 			&cmd_buf_ptr, &len_of_buffer);
 		if (rc) {
-			cam_mem_put_cpu_buf(config.packet_handle);
 			CAM_ERR(CAM_FLASH, "Fail in get buffer: %d", rc);
 			return rc;
 		}
 		if ((len_of_buffer < sizeof(struct cam_flash_init)) ||
 			(cmd_desc->offset >
 			(len_of_buffer - sizeof(struct cam_flash_init)))) {
-			cam_mem_put_cpu_buf(cmd_desc->mem_handle);
-			cam_mem_put_cpu_buf(config.packet_handle);
 			CAM_ERR(CAM_FLASH, "Not enough buffer");
 			rc = -EINVAL;
 			return rc;
@@ -1591,8 +1724,6 @@ int cam_flash_pmic_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 			if (remain_len < sizeof(struct cam_flash_set_on_off)) {
 				CAM_ERR(CAM_FLASH, "Not enough buffer");
 				rc = -EINVAL;
-				cam_mem_put_cpu_buf(cmd_desc->mem_handle);
-				cam_mem_put_cpu_buf(config.packet_handle);
 				return rc;
 			}
 
@@ -1601,16 +1732,12 @@ int cam_flash_pmic_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 			if (!flash_operation_info) {
 				CAM_ERR(CAM_FLASH,
 					"flash_operation_info Null");
-				cam_mem_put_cpu_buf(cmd_desc->mem_handle);
-				cam_mem_put_cpu_buf(config.packet_handle);
 				rc = -EINVAL;
 				return rc;
 			}
 			if (flash_operation_info->count >
 				CAM_FLASH_MAX_LED_TRIGGERS) {
 				CAM_ERR(CAM_FLASH, "led count out of limit");
-				cam_mem_put_cpu_buf(cmd_desc->mem_handle);
-				cam_mem_put_cpu_buf(config.packet_handle);
 				rc = -EINVAL;
 				return rc;
 			}
@@ -1637,15 +1764,13 @@ int cam_flash_pmic_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 			CAM_ERR(CAM_FLASH, "Wrong cmd_type = %d",
 				cam_flash_info->cmd_type);
 			rc = -EINVAL;
-			cam_mem_put_cpu_buf(cmd_desc->mem_handle);
-			cam_mem_put_cpu_buf(config.packet_handle);
 			return rc;
 		}
-
-		cam_mem_put_cpu_buf(cmd_desc->mem_handle);
 		break;
 	}
 	case CAM_FLASH_PACKET_OPCODE_SET_OPS: {
+		offset = (uint32_t *)((uint8_t *)&csl_packet->payload +
+			csl_packet->cmd_buf_offset);
 		frm_offset = csl_packet->header.request_id %
 			MAX_PER_FRAME_ARRAY;
 		flash_data = &fctrl->per_frame[frm_offset];
@@ -1659,12 +1784,12 @@ int cam_flash_pmic_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 
 		flash_data->cmn_attr.request_id = csl_packet->header.request_id;
 		flash_data->cmn_attr.is_settings_valid = true;
+		cmd_desc = (struct cam_cmd_buf_desc *)(offset);
 		rc = cam_mem_get_cpu_buf(cmd_desc->mem_handle,
 			&cmd_buf_ptr, &len_of_buffer);
 		if (rc) {
 			CAM_ERR(CAM_FLASH, "Fail in get buffer: 0x%x",
 				cmd_desc->mem_handle);
-			cam_mem_put_cpu_buf(config.packet_handle);
 			return rc;
 		}
 
@@ -1672,8 +1797,6 @@ int cam_flash_pmic_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 			(cmd_desc->offset >
 			(len_of_buffer - sizeof(struct common_header)))) {
 			CAM_ERR(CAM_FLASH, "not enough buffer");
-			cam_mem_put_cpu_buf(cmd_desc->mem_handle);
-			cam_mem_put_cpu_buf(config.packet_handle);
 			rc = -EINVAL;
 			return rc;
 		}
@@ -1699,8 +1822,6 @@ int cam_flash_pmic_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 			if (remain_len < sizeof(struct cam_flash_set_on_off)) {
 				CAM_ERR(CAM_FLASH, "Not enough buffer");
 				rc = -EINVAL;
-				cam_mem_put_cpu_buf(cmd_desc->mem_handle);
-				cam_mem_put_cpu_buf(config.packet_handle);
 				return rc;
 			}
 
@@ -1710,15 +1831,11 @@ int cam_flash_pmic_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 				CAM_ERR(CAM_FLASH,
 					"flash_operation_info Null");
 				rc = -EINVAL;
-				cam_mem_put_cpu_buf(cmd_desc->mem_handle);
-				cam_mem_put_cpu_buf(config.packet_handle);
 				return rc;
 			}
 			if (flash_operation_info->count >
 				CAM_FLASH_MAX_LED_TRIGGERS) {
 				CAM_ERR(CAM_FLASH, "led count out of limit");
-				cam_mem_put_cpu_buf(cmd_desc->mem_handle);
-				cam_mem_put_cpu_buf(config.packet_handle);
 				rc = -EINVAL;
 				return rc;
 			}
@@ -1753,21 +1870,19 @@ int cam_flash_pmic_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 		default:
 			CAM_ERR(CAM_FLASH, "Wrong cmd_type = %d",
 				cmn_hdr->cmd_type);
-			cam_mem_put_cpu_buf(cmd_desc->mem_handle);
-			cam_mem_put_cpu_buf(config.packet_handle);
 			rc = -EINVAL;
 			return rc;
 		}
-
-		cam_mem_put_cpu_buf(cmd_desc->mem_handle);
 		break;
 	}
 	case CAM_FLASH_PACKET_OPCODE_NON_REALTIME_SET_OPS: {
+		offset = (uint32_t *)((uint8_t *)&csl_packet->payload +
+			csl_packet->cmd_buf_offset);
 		fctrl->nrt_info.cmn_attr.is_settings_valid = true;
+		cmd_desc = (struct cam_cmd_buf_desc *)(offset);
 		rc = cam_mem_get_cpu_buf(cmd_desc->mem_handle,
 			&cmd_buf_ptr, &len_of_buffer);
 		if (rc) {
-			cam_mem_put_cpu_buf(config.packet_handle);
 			CAM_ERR(CAM_FLASH, "Fail in get buffer: %d", rc);
 			return rc;
 		}
@@ -1777,8 +1892,6 @@ int cam_flash_pmic_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 			(len_of_buffer - sizeof(struct common_header)))) {
 			CAM_ERR(CAM_FLASH, "Not enough buffer");
 			rc = -EINVAL;
-			cam_mem_put_cpu_buf(cmd_desc->mem_handle);
-			cam_mem_put_cpu_buf(config.packet_handle);
 			return rc;
 		}
 		remain_len = len_of_buffer - cmd_desc->offset;
@@ -1792,8 +1905,6 @@ int cam_flash_pmic_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 			if (remain_len < sizeof(struct cam_flash_set_on_off)) {
 				CAM_ERR(CAM_FLASH, "Not enough buffer");
 				rc = -EINVAL;
-				cam_mem_put_cpu_buf(cmd_desc->mem_handle);
-				cam_mem_put_cpu_buf(config.packet_handle);
 				return rc;
 			}
 			flash_operation_info =
@@ -1802,16 +1913,12 @@ int cam_flash_pmic_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 				CAM_ERR(CAM_FLASH,
 					"flash_operation_info Null");
 				rc = -EINVAL;
-				cam_mem_put_cpu_buf(cmd_desc->mem_handle);
-				cam_mem_put_cpu_buf(config.packet_handle);
 				return rc;
 			}
 			if (flash_operation_info->count >
 				CAM_FLASH_MAX_LED_TRIGGERS) {
 				CAM_ERR(CAM_FLASH, "led count out of limit");
 				rc = -EINVAL;
-				cam_mem_put_cpu_buf(cmd_desc->mem_handle);
-				cam_mem_put_cpu_buf(config.packet_handle);
 				return rc;
 			}
 
@@ -1831,8 +1938,6 @@ int cam_flash_pmic_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 			if (rc)
 				CAM_ERR(CAM_FLASH, "Apply setting failed: %d",
 					rc);
-			cam_mem_put_cpu_buf(cmd_desc->mem_handle);
-			cam_mem_put_cpu_buf(config.packet_handle);
 			return rc;
 		}
 		case CAMERA_SENSOR_FLASH_CMD_TYPE_QUERYCURR: {
@@ -1841,31 +1946,25 @@ int cam_flash_pmic_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 			if (remain_len < sizeof(struct cam_flash_query_curr)) {
 				CAM_ERR(CAM_FLASH, "Not enough buffer");
 				rc = -EINVAL;
-				cam_mem_put_cpu_buf(cmd_desc->mem_handle);
-				cam_mem_put_cpu_buf(config.packet_handle);
 				return rc;
 			}
 			flash_query_info =
 				(struct cam_flash_query_curr *)cmd_buf;
-#if __or(IS_REACHABLE(CONFIG_LEDS_QPNP_FLASH_V2), \
-			IS_REACHABLE(CONFIG_LEDS_QTI_FLASH))
+
+#if !IS_REACHABLE(CONFIG_LEDS_S2MPB02) && !defined(CONFIG_LEDS_KTD2692) && !defined(CONFIG_SAMSUNG_PMIC_FLASH)&&\
+	__or(IS_REACHABLE(CONFIG_LEDS_QPNP_FLASH_V2), IS_REACHABLE(CONFIG_LEDS_QTI_FLASH))
 			rc = cam_flash_led_prepare(fctrl->switch_trigger,
 				QUERY_MAX_AVAIL_CURRENT, &query_curr_ma,
 				soc_private->is_wled_flash);
 
 			CAM_DBG(CAM_FLASH, "query_curr_ma = %d",
 				query_curr_ma);
-#else
-			rc = -EOPNOTSUPP;
-#endif
-
 			if (rc) {
 				CAM_ERR(CAM_FLASH,
 				"Query current failed with rc=%d", rc);
-				cam_mem_put_cpu_buf(cmd_desc->mem_handle);
-				cam_mem_put_cpu_buf(config.packet_handle);
 				return rc;
 			}
+#endif
 			flash_query_info->query_current_ma = query_curr_ma;
 			break;
 		}
@@ -1874,8 +1973,6 @@ int cam_flash_pmic_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 			if (remain_len < sizeof(struct cam_flash_set_rer)) {
 				CAM_ERR(CAM_FLASH, "Not enough buffer");
 				rc = -EINVAL;
-				cam_mem_put_cpu_buf(cmd_desc->mem_handle);
-				cam_mem_put_cpu_buf(config.packet_handle);
 				return rc;
 			}
 			flash_rer_info = (struct cam_flash_set_rer *)cmd_buf;
@@ -1883,16 +1980,12 @@ int cam_flash_pmic_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 				CAM_ERR(CAM_FLASH,
 					"flash_rer_info Null");
 				rc = -EINVAL;
-				cam_mem_put_cpu_buf(cmd_desc->mem_handle);
-				cam_mem_put_cpu_buf(config.packet_handle);
 				return rc;
 			}
 			if (flash_rer_info->count >
 				CAM_FLASH_MAX_LED_TRIGGERS) {
 				CAM_ERR(CAM_FLASH, "led count out of limit");
 				rc = -EINVAL;
-				cam_mem_put_cpu_buf(cmd_desc->mem_handle);
-				cam_mem_put_cpu_buf(config.packet_handle);
 				return rc;
 			}
 
@@ -1916,20 +2009,15 @@ int cam_flash_pmic_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 			if (rc)
 				CAM_ERR(CAM_FLASH, "apply_setting failed: %d",
 					rc);
-			cam_mem_put_cpu_buf(cmd_desc->mem_handle);
-			cam_mem_put_cpu_buf(config.packet_handle);
 			return rc;
 		}
 		default:
 			CAM_ERR(CAM_FLASH, "Wrong cmd_type : %d",
 				cmn_hdr->cmd_type);
-			cam_mem_put_cpu_buf(cmd_desc->mem_handle);
-			cam_mem_put_cpu_buf(config.packet_handle);
 			rc = -EINVAL;
 			return rc;
 		}
 
-		cam_mem_put_cpu_buf(cmd_desc->mem_handle);
 		break;
 	}
 	case CAM_PKT_NOP_OPCODE: {
@@ -1941,7 +2029,6 @@ int cam_flash_pmic_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 				"Rxed NOP packets without linking");
 			fctrl->per_frame[frm_offset].cmn_attr.is_settings_valid
 				= false;
-			cam_mem_put_cpu_buf(config.packet_handle);
 			return -EINVAL;
 		}
 
@@ -1956,7 +2043,6 @@ int cam_flash_pmic_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 		CAM_ERR(CAM_FLASH, "Wrong Opcode : %d",
 			(csl_packet->header.op_code & 0xFFFFFF));
 		rc = -EINVAL;
-		cam_mem_put_cpu_buf(config.packet_handle);
 		return rc;
 	}
 
@@ -1991,7 +2077,6 @@ int cam_flash_pmic_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 					CAM_ERR(CAM_FLASH,
 						"Failed in adding request: %llu to request manager",
 						csl_packet->header.request_id);
-				cam_mem_put_cpu_buf(config.packet_handle);
 				return rc;
 			}
 			CAM_DBG(CAM_FLASH,
@@ -2000,7 +2085,6 @@ int cam_flash_pmic_pkt_parser(struct cam_flash_ctrl *fctrl, void *arg)
 		}
 	}
 
-	cam_mem_put_cpu_buf(config.packet_handle);
 	return rc;
 }
 
@@ -2043,16 +2127,6 @@ int cam_flash_release_dev(struct cam_flash_ctrl *fctrl)
 {
 	int rc = 0;
 
-	if (fctrl->i2c_data.streamoff_settings.is_settings_valid == true) {
-		fctrl->i2c_data.streamoff_settings.is_settings_valid = false;
-		rc = delete_request(&fctrl->i2c_data.streamoff_settings);
-		if (rc) {
-			CAM_WARN(CAM_FLASH,
-				"Failed to delete Stream off i2c_setting: %d",
-				rc);
-		}
-	}
-
 	if (fctrl->bridge_intf.device_hdl != 1) {
 		rc = cam_destroy_device_hdl(fctrl->bridge_intf.device_hdl);
 		if (rc)
@@ -2063,7 +2137,6 @@ int cam_flash_release_dev(struct cam_flash_ctrl *fctrl)
 		fctrl->bridge_intf.link_hdl = -1;
 		fctrl->bridge_intf.session_hdl = -1;
 		fctrl->last_flush_req = 0;
-		fctrl->streamoff_count = 0;
 	}
 
 	return rc;
@@ -2072,6 +2145,13 @@ int cam_flash_release_dev(struct cam_flash_ctrl *fctrl)
 void cam_flash_shutdown(struct cam_flash_ctrl *fctrl)
 {
 	int rc;
+
+#if defined(CONFIG_SAMSUNG_PMIC_FLASH)
+	cam_torch_off(fctrl);
+#elif IS_REACHABLE(CONFIG_LEDS_S2MPB02)
+	s2mpb02_led_en(S2MPB02_FLASH_LED_1, 0, S2MPB02_LED_TURN_WAY_I2C);/* flash, off */
+	s2mpb02_led_en(S2MPB02_TORCH_LED_1, 0, S2MPB02_LED_TURN_WAY_I2C);/* torch, off */
+#endif
 
 	if (fctrl->flash_state == CAM_FLASH_STATE_INIT)
 		return;
@@ -2122,3 +2202,74 @@ int cam_flash_apply_request(struct cam_req_mgr_apply_request *apply)
 
 	return rc;
 }
+
+#if defined(CONFIG_SAMSUNG_PMIC_FLASH)
+ssize_t flash_power_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t size)
+{
+	uint32_t i, j, value;
+
+	if(g_flash_ctrl == NULL) {
+		CAM_ERR(CAM_FLASH, "g_flash_ctrl handle is NULL");
+		return size;
+	}
+
+	if ((buf == NULL) || kstrtouint(buf, 10, &value)) {
+		CAM_ERR(CAM_FLASH, "Invalid Buffer");
+		return -EINVAL;
+	}
+
+	//default value
+#if defined(CONFIG_SEC_B5Q_PROJECT)
+	g_flash_data.led_current_ma[0] = 100;
+#else
+	g_flash_data.led_current_ma[0] = 75;
+#endif
+
+	CAM_INFO(CAM_FLASH,"torch value=%u", value);
+
+	if (value > 1000 && value < (1000 + 32)) {
+		for (i = 0; i < MAX_FLASHLIGHT_LEVEL; i++) {
+			if (calibData[i].level  == value) {
+				for (j = 0; j < CAM_FLASH_MAX_LED_TRIGGERS; j++) {
+					g_flash_data.led_current_ma[j] = calibData[i].current_mA / CAM_FLASH_MAX_LED_TRIGGERS;
+				}
+				CAM_INFO(CAM_FLASH, "match torch level (%u %u)", calibData[i].level, calibData[i].current_mA);
+				break;
+			}
+		}
+
+		if (i >= MAX_FLASHLIGHT_LEVEL)
+			CAM_ERR(CAM_FLASH, "can't process, invalid value=%u", value);
+	}
+
+	switch (buf[0]) {
+		case '0':
+			cam_torch_off(g_flash_ctrl);
+			CAM_INFO(CAM_FLASH,"torch off");
+			break;
+		case '1':
+		case '2':
+		case '3':
+		case '4':
+		case '5':
+		case '6':
+		case '7':
+		case '8':
+		case '9':
+			cam_torch_off(g_flash_ctrl);
+			if(value <= 300) {
+				for (j = 0; j < CAM_FLASH_MAX_LED_TRIGGERS; j++) {
+					g_flash_data.led_current_ma[j] = value / CAM_FLASH_MAX_LED_TRIGGERS;
+				}
+			}
+			g_flash_data.opcode = CAMERA_SENSOR_FLASH_OP_FIRELOW;
+			cam_flash_low(g_flash_ctrl,&g_flash_data);
+			CAM_INFO(CAM_FLASH,"torch on");
+			break;
+        default:
+                break;
+	}
+	return size;
+}
+EXPORT_SYMBOL(flash_power_store);
+#endif

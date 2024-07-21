@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/kernel.h>
@@ -15,6 +15,11 @@
 
 #define VALIDATE_VOLTAGE(min, max, config_val) ((config_val) && \
 	(config_val >= min) && (config_val <= max))
+
+#if defined(CONFIG_SAMSUNG_DEBUG_SENSOR_I2C)
+int to_do_print_vc__sen_id = 0;
+int to_dump_when_sof_freeze__sen_id = 0;
+#endif
 
 int cam_sensor_count_elems_i3c_device_id(struct device_node *dev,
 	int *num_entries, char *sensor_id_table_str)
@@ -112,6 +117,14 @@ static struct i2c_settings_list*
 {
 	struct i2c_settings_list *tmp;
 
+	if (i2c_reg_settings == NULL) {
+		CAM_ERR(CAM_SENSOR, "Failed in i2c list: %p", i2c_reg_settings);
+		return NULL;
+	} else if (i2c_reg_settings->list_head.next == NULL) {
+		CAM_ERR(CAM_SENSOR, "Failed in i2c list_head: %p", i2c_reg_settings->list_head.next);
+		return NULL;
+	}
+
 	tmp = kzalloc(sizeof(struct i2c_settings_list), GFP_KERNEL);
 
 	if (tmp != NULL)
@@ -146,7 +159,7 @@ int32_t cam_sensor_util_get_current_qtimer_ns(uint64_t *qtime_ns)
 	if (qtime_ns != NULL) {
 		*qtime_ns = mul_u64_u32_div(ticks,
 			QTIMER_MUL_FACTOR, QTIMER_DIV_FACTOR);
-		CAM_DBG(CAM_SENSOR, "Qtimer time: 0x%lx", *qtime_ns);
+		CAM_DBG(CAM_SENSOR, "Qtimer time: 0x%x", *qtime_ns);
 	} else {
 		CAM_ERR(CAM_SENSOR, "NULL pointer passed");
 		return -EINVAL;
@@ -264,11 +277,10 @@ int32_t cam_sensor_handle_random_write(
 	struct list_head **list)
 {
 	struct i2c_settings_list  *i2c_list;
-	int32_t rc = 0, cnt, payload_count;
+	int32_t rc = 0, cnt;
 
-	payload_count = cam_cmd_i2c_random_wr->header.count;
 	i2c_list = cam_sensor_get_i2c_ptr(i2c_reg_settings,
-						payload_count);
+		cam_cmd_i2c_random_wr->header.count);
 	if (i2c_list == NULL ||
 		i2c_list->i2c_settings.reg_setting == NULL) {
 		CAM_ERR(CAM_SENSOR, "Failed in allocating i2c_list");
@@ -277,14 +289,15 @@ int32_t cam_sensor_handle_random_write(
 
 	*cmd_length_in_bytes = (sizeof(struct i2c_rdwr_header) +
 		sizeof(struct i2c_random_wr_payload) *
-		payload_count);
+		(cam_cmd_i2c_random_wr->header.count));
 	i2c_list->op_code = CAM_SENSOR_I2C_WRITE_RANDOM;
 	i2c_list->i2c_settings.addr_type =
 		cam_cmd_i2c_random_wr->header.addr_type;
 	i2c_list->i2c_settings.data_type =
 		cam_cmd_i2c_random_wr->header.data_type;
 
-	for (cnt = 0; cnt < payload_count; cnt++) {
+	for (cnt = 0; cnt < (cam_cmd_i2c_random_wr->header.count);
+		cnt++) {
 		i2c_list->i2c_settings.reg_setting[cnt].reg_addr =
 			cam_cmd_i2c_random_wr->random_wr_payload[cnt].reg_addr;
 		i2c_list->i2c_settings.reg_setting[cnt].reg_data =
@@ -304,11 +317,10 @@ static int32_t cam_sensor_handle_continuous_write(
 	struct list_head **list)
 {
 	struct i2c_settings_list *i2c_list;
-	int32_t rc = 0, cnt, payload_count;
+	int32_t rc = 0, cnt;
 
-	payload_count = cam_cmd_i2c_continuous_wr->header.count;
 	i2c_list = cam_sensor_get_i2c_ptr(i2c_reg_settings,
-						payload_count);
+		cam_cmd_i2c_continuous_wr->header.count);
 	if (i2c_list == NULL ||
 		i2c_list->i2c_settings.reg_setting == NULL) {
 		CAM_ERR(CAM_SENSOR, "Failed in allocating i2c_list");
@@ -318,7 +330,7 @@ static int32_t cam_sensor_handle_continuous_write(
 	*cmd_length_in_bytes = (sizeof(struct i2c_rdwr_header) +
 		sizeof(cam_cmd_i2c_continuous_wr->reg_addr) +
 		sizeof(struct cam_cmd_read) *
-		(payload_count));
+		(cam_cmd_i2c_continuous_wr->header.count));
 	if (cam_cmd_i2c_continuous_wr->header.op_code ==
 		CAMERA_SENSOR_I2C_OP_CONT_WR_BRST)
 		i2c_list->op_code = CAM_SENSOR_I2C_WRITE_BURST;
@@ -335,7 +347,8 @@ static int32_t cam_sensor_handle_continuous_write(
 	i2c_list->i2c_settings.size =
 		cam_cmd_i2c_continuous_wr->header.count;
 
-	for (cnt = 0; cnt < payload_count; cnt++) {
+	for (cnt = 0; cnt < (cam_cmd_i2c_continuous_wr->header.count);
+		cnt++) {
 		i2c_list->i2c_settings.reg_setting[cnt].reg_addr =
 			cam_cmd_i2c_continuous_wr->reg_addr;
 		i2c_list->i2c_settings.reg_setting[cnt].reg_data =
@@ -378,7 +391,6 @@ static int32_t cam_sensor_get_io_buffer(
 			CAM_ERR(CAM_SENSOR,
 				"invalid size:io_cfg->offsets[0]: %d, buf_size: %d",
 				io_cfg->offsets[0], buf_size);
-			cam_mem_put_cpu_buf(io_cfg->mem_handle[0]);
 			return -EINVAL;
 		}
 		i2c_settings->read_buff =
@@ -390,7 +402,6 @@ static int32_t cam_sensor_get_io_buffer(
 			io_cfg->direction);
 		rc = -EINVAL;
 	}
-	cam_mem_put_cpu_buf(io_cfg->mem_handle[0]);
 	return rc;
 }
 
@@ -423,7 +434,6 @@ int32_t cam_sensor_util_write_qtimer_to_io_buffer(
 			CAM_ERR(CAM_SENSOR,
 				"invalid size:io_cfg->offsets[0]: %d, buf_size: %d",
 				io_cfg->offsets[0], buf_size);
-			cam_mem_put_cpu_buf(io_cfg->mem_handle[0]);
 			return -EINVAL;
 		}
 
@@ -434,12 +444,10 @@ int32_t cam_sensor_util_write_qtimer_to_io_buffer(
 			CAM_ERR(CAM_SENSOR,
 				"not enough size for qtimer, target_size:%d",
 				target_size);
-			cam_mem_put_cpu_buf(io_cfg->mem_handle[0]);
 			return -EINVAL;
 		}
 
 		memcpy((void *)target_buf, &qtime_ns, sizeof(uint64_t));
-		cam_mem_put_cpu_buf(io_cfg->mem_handle[0]);
 	} else {
 		CAM_ERR(CAM_SENSOR, "Invalid direction: %d",
 			io_cfg->direction);
@@ -633,7 +641,6 @@ int cam_sensor_i2c_command_parser(
 			(cmd_desc[i].offset >
 			(len_of_buff - sizeof(struct common_header)))) {
 			CAM_ERR(CAM_SENSOR, "buffer provided too small");
-			cam_mem_put_cpu_buf(cmd_desc[i].mem_handle);
 			return -EINVAL;
 		}
 		cmd_buf = (uint32_t *)generic_ptr;
@@ -642,7 +649,6 @@ int cam_sensor_i2c_command_parser(
 		remain_len -= cmd_desc[i].offset;
 		if (remain_len < cmd_desc[i].length) {
 			CAM_ERR(CAM_SENSOR, "buffer provided too small");
-			cam_mem_put_cpu_buf(cmd_desc[i].mem_handle);
 			return -EINVAL;
 		}
 
@@ -858,7 +864,7 @@ int cam_sensor_i2c_command_parser(
 				(struct cam_cmd_i2c_continuous_rd *)cmd_buf;
 
 				if (remain_len - byte_cnt <
-				    sizeof(struct cam_cmd_i2c_continuous_rd)) {
+					sizeof(struct cam_cmd_i2c_continuous_rd)) {
 					CAM_ERR(CAM_SENSOR,
 						"Not enough buffer space");
 					rc = -EINVAL;
@@ -900,12 +906,9 @@ int cam_sensor_i2c_command_parser(
 			}
 		}
 		i2c_reg_settings->is_settings_valid = 1;
-		cam_mem_put_cpu_buf(cmd_desc[i].mem_handle);
 	}
-	return rc;
 
 end:
-	cam_mem_put_cpu_buf(cmd_desc[i].mem_handle);
 	return rc;
 }
 
@@ -1226,11 +1229,11 @@ int32_t msm_camera_fill_vreg_params(
 
 					break;
 				}
-
 			}
 			if (j == num_vreg)
 				power_setting[i].seq_val = INVALID_VREG;
 			break;
+
 		case SENSOR_CUSTOM_REG2:
 			for (j = 0; j < num_vreg; j++) {
 
@@ -1252,6 +1255,55 @@ int32_t msm_camera_fill_vreg_params(
 			if (j == num_vreg)
 				power_setting[i].seq_val = INVALID_VREG;
 			break;
+
+		case SENSOR_CUSTOM_REG3:
+			for (j = 0; j < num_vreg; j++) {
+
+				if (!strcmp(soc_info->rgltr_name[j],
+					"cam_v_custom3")) {
+					CAM_DBG(CAM_SENSOR,
+						"i:%d j:%d cam_vcustom3", i, j);
+					power_setting[i].seq_val = j;
+
+					if (VALIDATE_VOLTAGE(
+						soc_info->rgltr_min_volt[j],
+						soc_info->rgltr_max_volt[j],
+						power_setting[i].config_val)) {
+						soc_info->rgltr_min_volt[j] =
+						soc_info->rgltr_max_volt[j] =
+						power_setting[i].config_val;
+					}
+					break;
+				}
+			}
+			if (j == num_vreg)
+				power_setting[i].seq_val = INVALID_VREG;
+			break;
+		case SENSOR_CUSTOM_REG4:
+			for (j = 0; j < num_vreg; j++) {
+
+				if (!strcmp(soc_info->rgltr_name[j],
+					"cam_v_custom4")) {
+					CAM_DBG(CAM_SENSOR,
+						"i:%d j:%d cam_vcustom4", i, j);
+					power_setting[i].seq_val = j;
+
+					if (VALIDATE_VOLTAGE(
+						soc_info->rgltr_min_volt[j],
+						soc_info->rgltr_max_volt[j],
+						power_setting[i].config_val)) {
+						soc_info->rgltr_min_volt[j] =
+						soc_info->rgltr_max_volt[j] =
+						power_setting[i].config_val;
+					}
+					break;
+				}
+			}
+			if (j == num_vreg)
+				power_setting[i].seq_val = INVALID_VREG;
+			break;
+
+
 		default:
 			break;
 		}
@@ -1386,29 +1438,22 @@ int32_t cam_sensor_update_power_settings(void *cmd_buf,
 	int32_t i = 0, pwr_up = 0, pwr_down = 0;
 	struct cam_sensor_power_setting *pwr_settings;
 	void *ptr = cmd_buf, *scr;
+	struct cam_cmd_power *pwr_cmd = (struct cam_cmd_power *)cmd_buf;
 	struct common_header *cmm_hdr = (struct common_header *)cmd_buf;
-	struct cam_cmd_power *pwr_cmd =
-		kzalloc(sizeof(struct cam_cmd_power), GFP_KERNEL);
-	if (!pwr_cmd)
-		return -ENOMEM;
-	memcpy(pwr_cmd, cmd_buf, sizeof(struct cam_cmd_power));
 
 	if (!pwr_cmd || !cmd_length || cmd_buf_len < (size_t)cmd_length ||
 		cam_sensor_validate(cmd_buf, cmd_buf_len)) {
 		CAM_ERR(CAM_SENSOR, "Invalid Args: pwr_cmd %pK, cmd_length: %d",
 			pwr_cmd, cmd_length);
-		rc = -EINVAL;
-		goto free_power_command;
+		return -EINVAL;
 	}
 
 	power_info->power_setting_size = 0;
 	power_info->power_setting =
 		kzalloc(sizeof(struct cam_sensor_power_setting) *
 			MAX_POWER_CONFIG, GFP_KERNEL);
-	if (!power_info->power_setting) {
-		rc = -ENOMEM;
-		goto free_power_command;
-	}
+	if (!power_info->power_setting)
+		return -ENOMEM;
 
 	power_info->power_down_setting_size = 0;
 	power_info->power_down_setting =
@@ -1418,8 +1463,7 @@ int32_t cam_sensor_update_power_settings(void *cmd_buf,
 		kfree(power_info->power_setting);
 		power_info->power_setting = NULL;
 		power_info->power_setting_size = 0;
-		rc = -ENOMEM;
-		goto free_power_command;
+		return -ENOMEM;
 	}
 
 	while (tot_size < cmd_length) {
@@ -1603,7 +1647,7 @@ int32_t cam_sensor_update_power_settings(void *cmd_buf,
 		}
 	}
 
-	goto free_power_command;
+	return rc;
 free_power_settings:
 	kfree(power_info->power_down_setting);
 	kfree(power_info->power_setting);
@@ -1611,9 +1655,6 @@ free_power_settings:
 	power_info->power_setting = NULL;
 	power_info->power_down_setting_size = 0;
 	power_info->power_setting_size = 0;
-free_power_command:
-	kfree(pwr_cmd);
-	pwr_cmd = NULL;
 	return rc;
 }
 
@@ -1658,6 +1699,28 @@ int cam_get_dt_power_setting_data(struct device_node *of_node,
 			ps[i].seq_type = SENSOR_VANA;
 		} else if (!strcmp(seq_name, "cam_vana1")) {
 			ps[i].seq_type = SENSOR_VANA1;
+		} else if (!strcmp(seq_name, "cam_vaf")) {
+			ps[i].seq_type = SENSOR_VAF;
+		} else if (!strcmp(seq_name, "cam_vdig")) {
+			ps[i].seq_type = SENSOR_VDIG;
+		} else if (!strcmp(seq_name, "cam_v_custom1")) {
+			ps[i].seq_type = SENSOR_CUSTOM_REG1;
+		} else if (!strcmp(seq_name, "cam_v_custom2")) {
+			ps[i].seq_type = SENSOR_CUSTOM_REG2;
+		} else if (!strcmp(seq_name, "cam_v_custom3")) {
+			ps[i].seq_type = SENSOR_CUSTOM_REG3;
+		} else if (!strcmp(seq_name, "cam_v_custom4")) {
+			ps[i].seq_type = SENSOR_CUSTOM_REG4;
+		} else if (!strcmp(seq_name, "cam_gpio_custom1")) {
+			ps[i].seq_type = SENSOR_CUSTOM_GPIO1;
+		} else if (!strcmp(seq_name, "cam_gpio_custom2")) {
+			ps[i].seq_type = SENSOR_CUSTOM_GPIO2;
+		} else if (!strcmp(seq_name, "cam_gpio_custom3")) {
+			ps[i].seq_type = SENSOR_CUSTOM_GPIO3;
+		} else if (!strcmp(seq_name, "cam_gpio_custom4")) {
+			ps[i].seq_type = SENSOR_CUSTOM_GPIO4;
+		} else if (!strcmp(seq_name, "cam_reset")) {
+			ps[i].seq_type = SENSOR_RESET;
 		} else if (!strcmp(seq_name, "cam_clk")) {
 			ps[i].seq_type = SENSOR_MCLK;
 		} else {
@@ -1716,6 +1779,9 @@ int cam_get_dt_power_setting_data(struct device_node *of_node,
 
 	for (c = 0; c < count; c++) {
 		power_info->power_down_setting[c] = ps[end];
+#if defined(CONFIG_SAMSUNG_OIS_MCU_STM32) || defined(CONFIG_SAMSUNG_ACTUATOR_PREVENT_SHAKING)
+		power_info->power_down_setting[c].config_val = 0;
+#endif
 		end--;
 	}
 	return rc;
@@ -1952,6 +2018,48 @@ int cam_sensor_util_init_gpio_pin_tbl(
 		rc = 0;
 	}
 
+	rc = of_property_read_u32(of_node, "gpio-custom3", &val);
+	if (rc != -EINVAL) {
+		if (rc < 0) {
+			CAM_ERR(CAM_SENSOR,
+				"read gpio-custom3 failed rc %d", rc);
+			goto free_gpio_info;
+		} else if (val >= gpio_array_size) {
+			CAM_ERR(CAM_SENSOR, "gpio-custom3 invalid %d", val);
+			rc = -EINVAL;
+			goto free_gpio_info;
+		}
+		gpio_num_info->gpio_num[SENSOR_CUSTOM_GPIO3] =
+			gconf->cam_gpio_common_tbl[val].gpio;
+		gpio_num_info->valid[SENSOR_CUSTOM_GPIO3] = 1;
+
+		CAM_DBG(CAM_SENSOR, "gpio-custom3 %d",
+			gpio_num_info->gpio_num[SENSOR_CUSTOM_GPIO3]);
+	} else {
+		rc = 0;
+	}
+
+	rc = of_property_read_u32(of_node, "gpio-custom4", &val);
+	if (rc != -EINVAL) {
+		if (rc < 0) {
+			CAM_ERR(CAM_SENSOR,
+				"read gpio-custom4 failed rc %d", rc);
+			goto free_gpio_info;
+		} else if (val >= gpio_array_size) {
+			CAM_ERR(CAM_SENSOR, "gpio-custom4 invalid %d", val);
+			rc = -EINVAL;
+			goto free_gpio_info;
+		}
+		gpio_num_info->gpio_num[SENSOR_CUSTOM_GPIO4] =
+			gconf->cam_gpio_common_tbl[val].gpio;
+		gpio_num_info->valid[SENSOR_CUSTOM_GPIO4] = 1;
+
+		CAM_DBG(CAM_SENSOR, "gpio-custom4 %d",
+			gpio_num_info->gpio_num[SENSOR_CUSTOM_GPIO4]);
+	} else {
+		rc = 0;
+	}
+
 	return rc;
 
 free_gpio_info:
@@ -2164,6 +2272,7 @@ int cam_sensor_core_power_up(struct cam_sensor_power_ctrl_t *ctrl,
 							"vreg %s %d",
 							soc_info->rgltr_name[j],
 							rc);
+						soc_info->rgltr[j] = NULL;
 						goto power_up_failed;
 					}
 
@@ -2206,6 +2315,9 @@ int cam_sensor_core_power_up(struct cam_sensor_power_ctrl_t *ctrl,
 		case SENSOR_STANDBY:
 		case SENSOR_CUSTOM_GPIO1:
 		case SENSOR_CUSTOM_GPIO2:
+		case SENSOR_CUSTOM_GPIO3:
+		case SENSOR_CUSTOM_GPIO4:
+
 			if (no_gpio) {
 				CAM_ERR(CAM_SENSOR, "request gpio failed");
 				goto power_up_failed;
@@ -2236,6 +2348,8 @@ int cam_sensor_core_power_up(struct cam_sensor_power_ctrl_t *ctrl,
 		case SENSOR_VAF_PWDM:
 		case SENSOR_CUSTOM_REG1:
 		case SENSOR_CUSTOM_REG2:
+		case SENSOR_CUSTOM_REG3:
+		case SENSOR_CUSTOM_REG4:
 			if (power_setting->seq_val == INVALID_VREG)
 				break;
 
@@ -2258,7 +2372,10 @@ int cam_sensor_core_power_up(struct cam_sensor_power_ctrl_t *ctrl,
 						soc_info->rgltr_name[vreg_idx],
 						rc);
 
+					soc_info->rgltr[vreg_idx] = NULL;
+#if !defined(CONFIG_SEC_Q5Q_PROJECT)
 					goto power_up_failed;
+#endif
 				}
 
 				if (power_setting->valid_config) {
@@ -2280,7 +2397,9 @@ int cam_sensor_core_power_up(struct cam_sensor_power_ctrl_t *ctrl,
 					CAM_ERR(CAM_SENSOR,
 						"Reg Enable failed for %s",
 						soc_info->rgltr_name[vreg_idx]);
+#if !defined(CONFIG_SEC_Q5Q_PROJECT)
 					goto power_up_failed;
+#endif
 				}
 				power_setting->data[0] =
 						soc_info->rgltr[vreg_idx];
@@ -2295,7 +2414,9 @@ int cam_sensor_core_power_up(struct cam_sensor_power_ctrl_t *ctrl,
 			if (rc < 0) {
 				CAM_ERR(CAM_SENSOR,
 					"Error in handling VREG GPIO");
+#if !defined(CONFIG_SEC_Q5Q_PROJECT)
 				goto power_up_failed;
+#endif
 			}
 			break;
 		default:
@@ -2345,6 +2466,8 @@ power_up_failed:
 		case SENSOR_STANDBY:
 		case SENSOR_CUSTOM_GPIO1:
 		case SENSOR_CUSTOM_GPIO2:
+		case SENSOR_CUSTOM_GPIO3:
+		case SENSOR_CUSTOM_GPIO4:
 			if (!gpio_num_info)
 				continue;
 			if (!gpio_num_info->valid
@@ -2362,6 +2485,8 @@ power_up_failed:
 		case SENSOR_VAF_PWDM:
 		case SENSOR_CUSTOM_REG1:
 		case SENSOR_CUSTOM_REG2:
+		case SENSOR_CUSTOM_REG3:
+		case SENSOR_CUSTOM_REG4:
 			if (power_setting->seq_val < num_vreg) {
 				CAM_DBG(CAM_SENSOR, "Disable Regulator");
 				vreg_idx = power_setting->seq_val;
@@ -2378,7 +2503,6 @@ power_up_failed:
 					CAM_ERR(CAM_SENSOR,
 					"Fail to disalbe reg: %s",
 					soc_info->rgltr_name[vreg_idx]);
-					soc_info->rgltr[vreg_idx] = NULL;
 					msm_cam_sensor_handle_reg_gpio(
 						power_setting->seq_type,
 						gpio_num_info,
@@ -2488,6 +2612,8 @@ int cam_sensor_util_power_down(struct cam_sensor_power_ctrl_t *ctrl,
 		CAM_DBG(CAM_SENSOR, "seq_type %d",  pd->seq_type);
 		switch (pd->seq_type) {
 		case SENSOR_MCLK:
+			usleep_range(1000, 1100);
+
 			for (i = soc_info->num_clk - 1; i >= 0; i--) {
 				cam_soc_util_clk_disable(soc_info, false, i);
 			}
@@ -2503,9 +2629,15 @@ int cam_sensor_util_power_down(struct cam_sensor_power_ctrl_t *ctrl,
 		case SENSOR_STANDBY:
 		case SENSOR_CUSTOM_GPIO1:
 		case SENSOR_CUSTOM_GPIO2:
+		case SENSOR_CUSTOM_GPIO3:
+		case SENSOR_CUSTOM_GPIO4:
 
 			if (!gpio_num_info->valid[pd->seq_type])
 				continue;
+
+			if (pd->seq_type == SENSOR_RESET) {
+				msleep(1);
+			}
 
 			cam_res_mgr_gpio_set_value(
 				gpio_num_info->gpio_num
@@ -2521,6 +2653,8 @@ int cam_sensor_util_power_down(struct cam_sensor_power_ctrl_t *ctrl,
 		case SENSOR_VAF_PWDM:
 		case SENSOR_CUSTOM_REG1:
 		case SENSOR_CUSTOM_REG2:
+		case SENSOR_CUSTOM_REG3:
+		case SENSOR_CUSTOM_REG4:
 			if (pd->seq_val == INVALID_VREG)
 				break;
 
@@ -2529,6 +2663,23 @@ int cam_sensor_util_power_down(struct cam_sensor_power_ctrl_t *ctrl,
 				pd->seq_val);
 			if (ps) {
 				if (pd->seq_val < num_vreg) {
+#if defined(CONFIG_SENSOR_RETENTION)
+					if (pd->config_val > 0 &&
+						soc_info->disable_sensor_retention == FALSE) {
+						CAM_INFO(CAM_SENSOR, "[RET_DBG] skip disable regulator, set sensor power %s, %ld",
+							soc_info->rgltr_name[ps->seq_val], pd->config_val);
+						if (soc_info->rgltr[ps->seq_val] != NULL)
+						{
+							ret = regulator_set_voltage(
+								soc_info->rgltr[ps->seq_val], pd->config_val, soc_info->rgltr_max_volt[ps->seq_val]);
+							if (ret) {
+								CAM_ERR(CAM_UTIL, "%s set voltage failed",
+									soc_info->rgltr_name[ps->seq_val]);
+							}
+						}
+						continue;
+					}
+#endif
 					CAM_DBG(CAM_SENSOR,
 						"Disable Regulator");
 					ret =  cam_soc_util_regulator_disable(
@@ -2595,3 +2746,1017 @@ int cam_sensor_util_power_down(struct cam_sensor_power_ctrl_t *ctrl,
 
 	return 0;
 }
+
+
+#if defined(CONFIG_SAMSUNG_DEBUG_SENSOR_I2C)
+enum {
+	e_vc_addr_260_264,
+	e_vc_addr_110_264,
+	e_vc_addr_110_30b0,
+	e_vc_addr_602a_6f12,
+	e_vc_addr_invalid,
+	e_vc_addr_max = e_vc_addr_invalid,
+};
+
+struct st_vc_addr {
+	uint32_t img_addr;
+	uint32_t pd_addr;
+	enum camera_sensor_i2c_type	data_sz;
+} vc_addr_info[e_vc_addr_max] = {
+	{ 0x0260, 0x0264, CAMERA_SENSOR_I2C_TYPE_BYTE },
+	{ 0x0110, 0x0264, CAMERA_SENSOR_I2C_TYPE_WORD },
+	{ 0x0110, 0x30B0, CAMERA_SENSOR_I2C_TYPE_BYTE },
+	{ 0x602A, 0x6F12, CAMERA_SENSOR_I2C_TYPE_BYTE }
+};
+
+struct st_sensordbg_addr {
+	uint32_t cit;
+	uint32_t aeb_cit_l;
+	uint32_t aeb_cit_s;
+	uint32_t fll;
+	uint32_t aeb_fll_l;
+	uint32_t aeb_fll_s;
+	enum camera_sensor_i2c_type	data_sz; // other than aeb_vc
+	uint32_t aeb_vc_l;
+	uint32_t aeb_vc_s;
+	enum camera_sensor_i2c_type	aeb_vc_sz; // only about aeb_vc
+} sensordbg_addr_info[e_seq_sensor_idn_max_invalid] = {
+	[e_seq_sensor_idn_s5khp2] = {
+		.cit = 0x0202,
+		.aeb_cit_l = 0x0e10,
+		.aeb_cit_s = 0x0e2a,
+		.fll = 0x0340,
+		.aeb_fll_l = 0x0e16,
+		.aeb_fll_s = 0x0e30,
+		.data_sz = CAMERA_SENSOR_I2C_TYPE_WORD,
+		.aeb_vc_l = 0x0e18,
+		.aeb_vc_s = 0x0e32,
+		.aeb_vc_sz = CAMERA_SENSOR_I2C_TYPE_WORD
+	},
+	[e_seq_sensor_idn_s5kgn3] = {
+		.cit = 0x0202,
+		.aeb_cit_l = 0x0e10,
+		.aeb_cit_s = 0x0e1e,
+		.fll = 0x0340,
+		.aeb_fll_l = 0x0e16,
+		.aeb_fll_s = 0x0e24,
+		.data_sz = CAMERA_SENSOR_I2C_TYPE_WORD,
+		.aeb_vc_l = 0x0e18,
+		.aeb_vc_s = 0x0e26,
+		.aeb_vc_sz = CAMERA_SENSOR_I2C_TYPE_BYTE
+	},
+	[e_seq_sensor_idn_s5k3lu] = {0,},
+	[e_seq_sensor_idn_imx564] = {0,},
+	[e_seq_sensor_idn_imx754] = {0,},
+	[e_seq_sensor_idn_s5k2ld] = {0,},
+	[e_seq_sensor_idn_s5k3k1] = {0,},
+};
+
+const uint32_t reg_addr_aeb_on = 0xe00;
+const uint32_t fcm_idx_addr = 0x0B30;
+
+inline e_seq_sensor_idnum get_seq_sen_id(uint32_t sensor_id)
+{
+	e_seq_sensor_idnum ret;
+	switch (sensor_id)
+	{
+	case SENSOR_ID_S5KHP2:
+		ret = e_seq_sensor_idn_s5khp2;
+		break;
+	case SENSOR_ID_S5KGN3:
+		ret = e_seq_sensor_idn_s5kgn3;
+		break;
+	case SENSOR_ID_S5K3LU:
+		ret = e_seq_sensor_idn_s5k3lu;
+		break;
+	case SENSOR_ID_IMX564:
+		ret = e_seq_sensor_idn_imx564;
+		break;
+	case SENSOR_ID_IMX754:
+		ret = e_seq_sensor_idn_imx754;
+		break;
+	case SENSOR_ID_S5K2LD:
+		ret = e_seq_sensor_idn_s5k2ld;
+		break;
+	case SENSOR_ID_S5K3K1:
+		ret = e_seq_sensor_idn_s5k3k1;
+		break;
+	default:
+		ret = e_seq_sensor_idn_max_invalid;
+		break;
+	}
+	return ret;
+}
+
+
+inline int32_t get_vc_pick_idx(uint32_t sensor_id)
+{
+	switch (sensor_id)
+	{
+	case SENSOR_ID_S5KGN3:
+	case SENSOR_ID_S5K3LU:
+		return e_vc_addr_260_264;
+	case SENSOR_ID_S5KHP2:
+		return e_vc_addr_110_264;
+	case SENSOR_ID_IMX564:
+	case SENSOR_ID_IMX754:
+		return e_vc_addr_110_30b0;
+	case SENSOR_ID_S5K2LD:
+		return e_vc_addr_602a_6f12;
+	}
+	return e_vc_addr_invalid;
+}
+
+
+void cam_sensor_parse_reg(
+	struct cam_sensor_ctrl_t* s_ctrl,
+	struct i2c_settings_list* i2c_list,
+	int32_t *dbg_sen_id,
+	int32_t *update_type
+	)
+{
+	uint32_t i;
+	int32_t vc_pick_idx = e_vc_addr_invalid;
+	bool need_to_check_exp_ctl_violation = false;
+	uint32_t seq_sen_id = e_seq_sensor_idn_max_invalid;
+
+	if (s_ctrl == NULL || i2c_list == NULL) {
+		return;
+	}
+
+	vc_pick_idx = get_vc_pick_idx(s_ctrl->sensordata->slave_info.sensor_id);
+	if (vc_pick_idx == e_vc_addr_invalid) {
+		CAM_DBG(CAM_SENSOR, "invalid vc_pick_idx");
+		return;
+	}
+	seq_sen_id = get_seq_sen_id(s_ctrl->sensordata->slave_info.sensor_id);
+
+	if ((seq_sen_id == e_seq_sensor_idn_s5khp2) ||
+		(seq_sen_id == e_seq_sensor_idn_s5kgn3)) {
+		need_to_check_exp_ctl_violation = true;
+	}
+
+	if (i2c_list->op_code == CAM_SENSOR_I2C_WRITE_RANDOM) {
+		for (i = 0; i < i2c_list->i2c_settings.size; i++) {
+			if (i2c_list->i2c_settings.reg_setting[i].reg_addr == reg_addr_aeb_on) {
+				*dbg_sen_id = s_ctrl->sensordata->slave_info.sensor_id;// AEB ctrl change results in vc change
+				*update_type |= e_sensor_upd_event_vc;
+			}
+			else if ((i2c_list->i2c_settings.reg_setting[i].reg_addr == vc_addr_info[vc_pick_idx].img_addr) ||
+				(i2c_list->i2c_settings.reg_setting[i].reg_addr == vc_addr_info[vc_pick_idx].pd_addr)) {
+				*dbg_sen_id = s_ctrl->sensordata->slave_info.sensor_id;
+				*update_type |= e_sensor_upd_event_vc;
+			}
+			if (need_to_check_exp_ctl_violation) {
+				if ((i2c_list->i2c_settings.reg_setting[i].reg_addr == sensordbg_addr_info[seq_sen_id].cit) ||
+					(i2c_list->i2c_settings.reg_setting[i].reg_addr == sensordbg_addr_info[seq_sen_id].aeb_cit_l) ||
+					(i2c_list->i2c_settings.reg_setting[i].reg_addr == sensordbg_addr_info[seq_sen_id].aeb_cit_s)) {
+					*update_type |= e_sensor_upd_event_exposure;
+				}
+			}
+		}
+	}
+}
+
+
+bool cam_sensor_check_aeb_on(struct cam_sensor_ctrl_t* s_ctrl)
+{
+	int	rc = 0;
+	uint32_t reg_addr_aeb_ctrl = 0xe00;
+	bool is_aeb_activated = false;
+	uint32_t val_aeb_ctrl = 0;
+	struct cam_camera_slave_info* slave_info;
+
+	slave_info = &(s_ctrl->sensordata->slave_info);
+
+	if (!slave_info) {
+		CAM_ERR(CAM_SENSOR,	" failed: %pK",
+			slave_info);
+		return false;
+	}
+	if(SENSOR_ID_S5K2LD == s_ctrl->sensordata->slave_info.sensor_id) {
+		reg_addr_aeb_ctrl = 0xe0a;
+	}
+
+	rc = camera_io_dev_read(
+		&(s_ctrl->io_master_info),
+		reg_addr_aeb_ctrl,
+		&val_aeb_ctrl, CAMERA_SENSOR_I2C_TYPE_WORD,
+		CAMERA_SENSOR_I2C_TYPE_WORD, false);
+	if (rc < 0) {
+		CAM_ERR(CAM_SENSOR, "Failed to read 0x%x", reg_addr_aeb_ctrl);
+	}
+
+	switch (s_ctrl->sensordata->slave_info.sensor_id)
+	{
+	case SENSOR_ID_S5KHP2:
+		is_aeb_activated = ((val_aeb_ctrl & 0xf) == 0x3) ? true : false;
+		break;
+	case SENSOR_ID_S5KGN3:
+	case SENSOR_ID_S5K3LU:
+		is_aeb_activated = ((val_aeb_ctrl & 0x0f00) == 0x200) ? true : false;
+		break;
+	case SENSOR_ID_IMX564:
+	case SENSOR_ID_IMX754:
+		is_aeb_activated = ((val_aeb_ctrl & 0x0f00) == 0x200) ? true : false;
+		break;
+	case SENSOR_ID_S5K3K1:
+		is_aeb_activated = ((val_aeb_ctrl & 0x0f00) == 0x200) ? true : false;
+		break;
+	case SENSOR_ID_S5K2LD:
+		is_aeb_activated = ((val_aeb_ctrl & 0xf) == 0x2) ? true : false;
+		break;
+	default:
+		break;
+	}
+	CAM_DBG(CAM_SENSOR, "[AEB_DBG][%s] read addr 0x%x data 0x%x",
+			s_ctrl->sensor_name,
+			reg_addr_aeb_ctrl,
+			val_aeb_ctrl
+			);
+	return is_aeb_activated;
+}
+
+
+void cam_sensor_dbg_print_vc(struct cam_sensor_ctrl_t* s_ctrl)
+{
+	int	rc = 0;
+	uint32_t vc_img	= 0, vc_pd_h = 0, vc_pd_v = 0;
+	uint32_t vc_pick_idx = e_vc_addr_invalid;
+	bool is_aeb_activated = false;
+	bool is_fcm_debugging = false;
+	uint32_t fcm_idx = 0;
+	uint32_t seq_sen_id = get_seq_sen_id(s_ctrl->sensordata->slave_info.sensor_id);
+
+	struct cam_camera_slave_info* slave_info;
+
+	slave_info = &(s_ctrl->sensordata->slave_info);
+
+	if (!slave_info) {
+		CAM_ERR(CAM_SENSOR,	" failed: %pK",
+			slave_info);
+		return;
+	}
+
+	if (seq_sen_id == e_seq_sensor_idn_max_invalid) {
+		return;
+	}
+
+	switch (s_ctrl->sensordata->slave_info.sensor_id)
+	{
+	case SENSOR_ID_S5KHP2:
+		vc_pick_idx = e_vc_addr_110_264;
+		is_fcm_debugging = true;
+		break;
+	case SENSOR_ID_S5KGN3:
+	case SENSOR_ID_S5K3LU:
+		vc_pick_idx = e_vc_addr_260_264;
+		break;
+	case SENSOR_ID_IMX564:
+	case SENSOR_ID_IMX754:
+		vc_pick_idx = e_vc_addr_110_30b0;
+		break;
+	case SENSOR_ID_S5K2LD:
+		vc_pick_idx = e_vc_addr_602a_6f12;
+		break;
+	default:
+		return;
+	}
+
+	is_aeb_activated = cam_sensor_check_aeb_on(s_ctrl);
+
+	if (is_aeb_activated)
+	{
+		uint32_t vc_l = 0, vc_s = 0;
+
+		if (sensordbg_addr_info[seq_sen_id].aeb_vc_sz != CAMERA_SENSOR_I2C_TYPE_INVALID) {
+			rc = camera_io_dev_read(
+				&(s_ctrl->io_master_info),
+				sensordbg_addr_info[seq_sen_id].aeb_vc_l,
+				&vc_l, CAMERA_SENSOR_I2C_TYPE_WORD,
+				sensordbg_addr_info[seq_sen_id].aeb_vc_sz, false);
+			if (rc < 0) {
+				CAM_ERR(CAM_SENSOR, "Failed to read 0x%x", sensordbg_addr_info[seq_sen_id].aeb_vc_l);
+			}
+			rc = camera_io_dev_read(
+				&(s_ctrl->io_master_info),
+				sensordbg_addr_info[seq_sen_id].aeb_vc_s,
+				&vc_s, CAMERA_SENSOR_I2C_TYPE_WORD,
+				sensordbg_addr_info[seq_sen_id].aeb_vc_sz, false);
+			if (rc < 0) {
+				CAM_ERR(CAM_SENSOR, "Failed to read 0x%x", sensordbg_addr_info[seq_sen_id].aeb_vc_s);
+			}
+
+			CAM_INFO(CAM_SENSOR, "[AEB_DBG]%s[%s] AEB switched on : VC img_l 0x%x img_s 0x%x, reqId %lld",
+			s_ctrl->is_bubble_packet == true ? "[BUBBLE]":"",
+			s_ctrl->sensor_name,
+				vc_l, vc_s, s_ctrl->last_applied_req);
+		} else {
+			CAM_INFO(CAM_SENSOR, "[AEB_DBG]%s[%s] AEB switched on : odd vc, reqId %lld",
+				s_ctrl->is_bubble_packet == true ? "[BUBBLE]" : "",
+				s_ctrl->sensor_name, s_ctrl->last_applied_req);
+		}
+	} else {
+		if (vc_pick_idx == e_vc_addr_invalid) {
+			CAM_INFO(CAM_SENSOR, "[AEB_DBG]%s[%s] AEB off, reqId %lld",
+				s_ctrl->is_bubble_packet == true ? "[BUBBLE]" : "",
+				s_ctrl->sensor_name
+				);
+		} else {
+			rc = camera_io_dev_read(
+				&(s_ctrl->io_master_info),
+				vc_addr_info[vc_pick_idx].img_addr,
+				&vc_img, CAMERA_SENSOR_I2C_TYPE_WORD,
+				vc_addr_info[vc_pick_idx].data_sz, false);
+			if (rc < 0) {
+				CAM_ERR(CAM_SENSOR, "Failed to read 0x%x", vc_addr_info[vc_pick_idx].img_addr);
+			}
+
+			rc = camera_io_dev_read(
+				&(s_ctrl->io_master_info),
+				vc_addr_info[vc_pick_idx].pd_addr,
+				&vc_pd_h, CAMERA_SENSOR_I2C_TYPE_WORD,
+				vc_addr_info[vc_pick_idx].data_sz, false);
+			if (rc < 0) {
+				CAM_ERR(CAM_SENSOR, "Failed to read 0x%x", vc_addr_info[vc_pick_idx].pd_addr);
+			}
+
+			if (is_fcm_debugging == true) {
+				rc = camera_io_dev_read(
+				&(s_ctrl->io_master_info),
+				fcm_idx_addr,
+				&fcm_idx, CAMERA_SENSOR_I2C_TYPE_WORD,
+				CAMERA_SENSOR_I2C_TYPE_WORD, false);
+				if (rc < 0) {
+					CAM_ERR(CAM_SENSOR, "Failed to read 0x%x", fcm_idx_addr);
+				}
+			}
+
+			if (s_ctrl->sensordata->slave_info.sensor_id == SENSOR_ID_S5KHP2) {
+				vc_img = (vc_img & 0xf00) >> 8;
+				vc_pd_v = (vc_pd_h & 0xf);
+				vc_pd_h = (vc_pd_h & 0xf00) >> 8;
+			}
+
+			CAM_INFO(CAM_SENSOR, "[AEB_DBG]%s[%s] AEB off, VC img 0x%x, hpd 0x%x, vpd 0x%x (%dByte) fcm_idx 0x%x, reqId %lld",
+			s_ctrl->is_bubble_packet == true ? "[BUBBLE]":"",
+			s_ctrl->sensor_name,
+				vc_img, vc_pd_h, vc_pd_v, vc_addr_info[vc_pick_idx].data_sz, fcm_idx, s_ctrl->last_applied_req);
+		}
+	}
+}
+
+
+void cam_sensor_dbg_exp_violation(struct cam_sensor_ctrl_t* s_ctrl)
+{
+	 int rc = 0;
+	 bool is_aeb_activated = false;
+	uint32_t seq_sen_id = get_seq_sen_id(s_ctrl->sensordata->slave_info.sensor_id);
+
+	struct cam_camera_slave_info* slave_info;
+
+	slave_info = &(s_ctrl->sensordata->slave_info);
+
+	if (!slave_info) {
+		CAM_ERR(CAM_SENSOR, " failed: %pK",
+			slave_info);
+		return;
+	}
+
+	// 1. if sony sesor, return
+	if ((seq_sen_id != e_seq_sensor_idn_s5khp2) &&
+		(seq_sen_id != e_seq_sensor_idn_s5kgn3)) {
+		return;
+	}
+
+	is_aeb_activated = cam_sensor_check_aeb_on(s_ctrl);
+
+	// 2. if AEB on
+	if (is_aeb_activated) {
+		// compare AEB L/S cit and AEB FLL
+		uint32_t val_aeb_cit_l = 0, val_aeb_cit_s = 0;
+		uint32_t val_aeb_fll_l = 0, val_aeb_fll_s = 0;
+		bool long_cit_violation = false, short_cit_violation = false;
+
+		rc = camera_io_dev_read(
+			&(s_ctrl->io_master_info),
+			sensordbg_addr_info[seq_sen_id].aeb_cit_l,
+			&val_aeb_cit_l, CAMERA_SENSOR_I2C_TYPE_WORD,
+			sensordbg_addr_info[seq_sen_id].data_sz, false);
+		if (rc < 0) {
+			CAM_ERR(CAM_SENSOR, "Failed to read 0x%x", sensordbg_addr_info[seq_sen_id].aeb_cit_l);
+		}
+		rc = camera_io_dev_read(
+			&(s_ctrl->io_master_info),
+			sensordbg_addr_info[seq_sen_id].aeb_fll_l,
+			&val_aeb_fll_l, CAMERA_SENSOR_I2C_TYPE_WORD,
+			sensordbg_addr_info[seq_sen_id].data_sz, false);
+		if (rc < 0) {
+			CAM_ERR(CAM_SENSOR, "Failed to read 0x%x", sensordbg_addr_info[seq_sen_id].aeb_fll_l);
+		}
+		rc = camera_io_dev_read(
+			&(s_ctrl->io_master_info),
+			sensordbg_addr_info[seq_sen_id].aeb_cit_s,
+			&val_aeb_cit_s, CAMERA_SENSOR_I2C_TYPE_WORD,
+			sensordbg_addr_info[seq_sen_id].data_sz, false);
+		if (rc < 0) {
+			CAM_ERR(CAM_SENSOR, "Failed to read 0x%x", sensordbg_addr_info[seq_sen_id].aeb_cit_s);
+		}
+		rc = camera_io_dev_read(
+			&(s_ctrl->io_master_info),
+			sensordbg_addr_info[seq_sen_id].aeb_fll_s,
+			&val_aeb_fll_s, CAMERA_SENSOR_I2C_TYPE_WORD,
+			sensordbg_addr_info[seq_sen_id].data_sz, false);
+		if (rc < 0) {
+			CAM_ERR(CAM_SENSOR, "Failed to read 0x%x", sensordbg_addr_info[seq_sen_id].aeb_fll_s);
+		}
+		long_cit_violation = (val_aeb_cit_l > val_aeb_fll_l) ? true : false;
+		short_cit_violation = (val_aeb_cit_s > val_aeb_fll_s) ? true : false;
+
+		if (long_cit_violation || short_cit_violation)
+			CAM_ERR(CAM_SENSOR, "[SEN_DBG] %s %s (l: 0x%x 0x%x, s: 0x%x 0x%x)",
+				long_cit_violation ? "LONG_CIT_VIOLATION" : "",
+				short_cit_violation ? "SHORT_CIT_VIOLATION" : "",
+				val_aeb_cit_l, val_aeb_fll_l,
+				val_aeb_cit_s, val_aeb_fll_s);
+	}
+	// 3. if AEB off
+	else {
+		uint32_t val_cit = 0;
+		uint32_t val_fll = 0;
+		bool cit_violation = false;
+
+		rc = camera_io_dev_read(
+			&(s_ctrl->io_master_info),
+			sensordbg_addr_info[seq_sen_id].cit,
+			&val_cit, CAMERA_SENSOR_I2C_TYPE_WORD,
+			sensordbg_addr_info[seq_sen_id].data_sz, false);
+		if (rc < 0) {
+			CAM_ERR(CAM_SENSOR, "Failed to read 0x%x", sensordbg_addr_info[seq_sen_id].cit);
+		}
+		rc = camera_io_dev_read(
+			&(s_ctrl->io_master_info),
+			sensordbg_addr_info[seq_sen_id].fll,
+			&val_fll, CAMERA_SENSOR_I2C_TYPE_WORD,
+			sensordbg_addr_info[seq_sen_id].data_sz, false);
+		if (rc < 0) {
+			CAM_ERR(CAM_SENSOR, "Failed to read 0x%x", sensordbg_addr_info[seq_sen_id].fll);
+		}
+		// compare cit and FLL
+		cit_violation = (val_cit > val_fll) ? true : false;
+		if (cit_violation)
+			CAM_ERR(CAM_SENSOR, "[SEN_DBG] CIT_VIOLATION (0x%x 0x%x)",
+				val_cit, val_fll);
+	}
+}
+
+
+void cam_sensor_dbg_print_by_upd_type(struct cam_sensor_ctrl_t* s_ctrl, int32_t sen_update_type)
+{
+	if ((sen_update_type & e_sensor_upd_event_vc) == e_sensor_upd_event_vc)
+		cam_sensor_dbg_print_vc(s_ctrl);
+
+	if ((sen_update_type & e_sensor_upd_event_exposure) == e_sensor_upd_event_exposure)
+		cam_sensor_dbg_exp_violation(s_ctrl);
+}
+
+void cam_sensor_i2c_dump_util(
+	struct cam_sensor_ctrl_t *s_ctrl,
+	struct i2c_settings_list *i2c_list,
+	int i2c_debug_cnt)
+{
+	uint32_t size=0, i;
+
+	if (s_ctrl == NULL || i2c_list == NULL) {
+		return;
+	}
+
+	size = i2c_list->i2c_settings.size;
+	if (strstr(debug_sensor_name, s_ctrl->sensor_name) != NULL) {
+		CAM_INFO(CAM_SENSOR, "sensor_name:%s", s_ctrl->sensor_name);
+		for (i = 0; i < size; i++) {
+			if (i2c_debug_cnt == 0) {
+				if (i2c_list->op_code == CAM_SENSOR_I2C_WRITE_RANDOM) {
+					CAM_INFO(CAM_SENSOR, "%s addr:0x%4x data:0x%4x",
+						s_ctrl->is_bubble_packet ? "[BUBBLE]" : "",
+						i2c_list->i2c_settings.reg_setting[i].reg_addr,
+						i2c_list->i2c_settings.reg_setting[i].reg_data);
+				}
+			} else if (i2c_debug_cnt > 0) {
+				if (i == 0) {
+					CAM_INFO(CAM_SENSOR,
+						"[I2C_DBG] ====== op_code : %d, size : %d ======",
+						i2c_list->op_code, i2c_list->i2c_settings.size);
+				}
+				CAM_INFO(CAM_SENSOR,
+					"[I2C_DBG] [%d] addr : 0x%04X, data : 0x%04X", i,
+					i2c_list->i2c_settings.reg_setting[i].reg_addr,
+					i2c_list->i2c_settings.reg_setting[i].reg_data);
+				if (i >= i2c_debug_cnt)
+					break;
+			}
+		}
+	}
+}
+
+
+struct cam_sensor_i2c_reg_array page_4000_reg_array[] = {
+	{0xFCFC, 0x4000, 0, 0},
+};
+
+struct cam_sensor_i2c_reg_array page_1001_reg_array[] = {
+	{0xFCFC, 0x1001, 0, 0},
+};
+
+struct cam_sensor_i2c_reg_array page_1000_reg_array[] = {
+	{0xFCFC, 0x1000, 0, 0},
+};
+
+struct cam_sensor_i2c_reg_array page_1003_reg_array[] = {
+	{0xFCFC, 0x1003, 0, 0},
+};
+
+const uint32_t dump_addr_page4000[] = {
+	0x001E, 0x0B30, 0x0B32, 0x0C50,
+	0x112, 0x030E, 0x312, 0x310,
+	0x342, 0x340, 0xC340, 0x118,
+	0x110, 0x264, 0x0B10, 0x0B12,
+	0x344, 0x346, 0x348, 0x034A,
+	0x034C, 0x034E, 0x350, 0x352,
+	0x380, 0x382, 0x384, 0x386,
+	0x900, 0x040C, 0x404, 0x408,
+	0x040A, 0x400, 0x0D02, 0x0D06,
+	0x0D08, 0x55FE, 0x0E00, 0x0E04,
+	0x0E10, 0x0E12, 0x0E14, 0x0E16,
+	0x0E18, 0x0E1A, 0x0E1C, 0x0E1E,
+	0x0E20, 0x0E22, 0x0E24, 0x0E26,
+	0x0E28, 0x0E2A, 0x0E2C, 0x0E2E,
+	0x0E30, 0x0E32, 0x0E34, 0x0E36,
+	0x0E38, 0x0E3A, 0x0E3C, 0x0E3E,
+	0x0E40, 0x0E42, 0x0104
+};
+
+const uint32_t dump_addr_page1001[] = {
+	0xA200, 0xA204, 0xA20A, 0x720,
+	0x072A, 0x0540, 0x0542, 0x0544,
+	0x0546, 0x0548, 0x054A, 0x054C,
+	0x054E, 0x550, 0x552, 0x554,
+	0x556, 0x558, 0x055A, 0x055C,
+	0x055E, 0x560, 0x562, 0x564,
+	0x566, 0x568, 0x056A, 0x056C,
+	0x056E, 0x570, 0x572, 0x574,
+	0x576, 0x578, 0x057A, 0x057C,
+	0x057E, 0x580, 0x582, 0x584,
+	0x586, 0x588, 0x058A, 0x058C,
+	0x058E, 0x590, 0x592, 0x594,
+	0x596, 0x598, 0x059A, 0x059C,
+	0x059E, 0x05A0, 0x05A2, 0x05A4,
+	0x05A6, 0x05A8, 0x05AA, 0x05AC,
+	0x05AE, 0x05B0, 0x05B2, 0x05B4,
+	0x05B6, 0x05B8, 0x05BA, 0x05BC,
+	0x05BE, 0x05C0, 0x05C2, 0x05C4,
+	0x05C6, 0x05C8, 0x05CA, 0x05CC,
+	0x05CE, 0x05D0, 0x05D2, 0x05D4,
+	0x05D6, 0x05D8, 0x05DA, 0x05DC,
+	0xA26E, 0xA202, 0xA206
+};
+
+const uint32_t dump_addr_page1000[] =
+{
+	0x2FC0,	0x2FC2, 0x35DC, 0xD05A,
+	0xC88A, 0xEB30, 0xE800, 0x33DE,
+	0x33E2, 0x33E6, 0x33EA, 0x33EE,
+	0x33F2, 0x33F6, 0x33FA, 0x33FE,
+	0x3402, 0x3406, 0x340A, 0x340E,
+	0x3412, 0x3416, 0x341A, 0x341E,
+	0x3422, 0x3426, 0x342A, 0x342E,
+	0x3432, 0x3436, 0x343A, 0x343E,
+	0x3442, 0x3446, 0x344A, 0x344E,
+	0x3452, 0x3456
+};
+
+struct st_exposure_reg_dump_addr {
+	uint32_t addr;
+	enum camera_sensor_i2c_type	data_sz;
+	const char* addr_name;
+};
+
+struct st_exposure_reg_dump_addr hp2_exp_addr_info[] = {
+	{ 0x0202, CAMERA_SENSOR_I2C_TYPE_WORD, "CIT"},
+	{ 0x0342, CAMERA_SENSOR_I2C_TYPE_WORD, "LLK"},
+	{ 0x0340, CAMERA_SENSOR_I2C_TYPE_WORD, "FLL"},
+	{ 0x0e00, CAMERA_SENSOR_I2C_TYPE_WORD, "AEB ctl"},
+	{ 0x0b30, CAMERA_SENSOR_I2C_TYPE_WORD, "FCM idx"},
+};
+
+
+struct st_exposure_reg_dump_addr gn3_dump_addr_arr[] = {
+	{ 0x034c, CAMERA_SENSOR_I2C_TYPE_WORD, "width" },
+	{ 0x034e, CAMERA_SENSOR_I2C_TYPE_WORD, "height" },
+};
+
+struct st_exposure_reg_dump_addr imx564_754_exp_addr_info[] = {
+	{ 0x0005, CAMERA_SENSOR_I2C_TYPE_BYTE, "FRAME COUNTER" },
+	{ 0x0100, CAMERA_SENSOR_I2C_TYPE_WORD, "STREAM ON" },
+	{ 0x0342, CAMERA_SENSOR_I2C_TYPE_WORD, "LINE LENGTH PCK" },
+	{ 0x0114, CAMERA_SENSOR_I2C_TYPE_WORD, "CSI_LANE_MODE" },
+	{ 0x0112, CAMERA_SENSOR_I2C_TYPE_WORD, "CSI_DT_FMT" },
+	{ 0x0830, CAMERA_SENSOR_I2C_TYPE_BYTE, "SCAL_PERIOD_EN" },
+	{ 0x0832, CAMERA_SENSOR_I2C_TYPE_BYTE, "SCAL_INIT_EN" },
+	{ 0x3323, CAMERA_SENSOR_I2C_TYPE_BYTE, "SCAL_TSKEWCAL_UNIT" },
+	{ 0x3329, CAMERA_SENSOR_I2C_TYPE_BYTE, "SCAL_TSKEWCAL_INIT_1" },
+	{ 0x332A, CAMERA_SENSOR_I2C_TYPE_WORD, "SCAL_TSKEWCAL_INIT_2" },
+	{ 0x332D, CAMERA_SENSOR_I2C_TYPE_BYTE, "SCAL_TSKEWCAL_PERIOD_1" },
+	{ 0x332E, CAMERA_SENSOR_I2C_TYPE_WORD, "SCAL_TSKEWCAL_PERIOD_2" },
+	{ 0x0808, CAMERA_SENSOR_I2C_TYPE_BYTE, "PHY_CTRL" },
+	{ 0x0820, CAMERA_SENSOR_I2C_TYPE_BYTE, "REQ_LINK_BIT_RATE_MBPS" },
+	{ 0x0843, CAMERA_SENSOR_I2C_TYPE_BYTE, "TGR_PPRG_SEQ" },
+	{ 0x084E, CAMERA_SENSOR_I2C_TYPE_WORD, "T3PREPARE" },
+	{ 0x0850, CAMERA_SENSOR_I2C_TYPE_WORD, "T3LPX" },
+	{ 0x0852, CAMERA_SENSOR_I2C_TYPE_WORD, "T3HSEXIT" },
+	{ 0x0854, CAMERA_SENSOR_I2C_TYPE_WORD, "T3PREBEGIN" },
+	{ 0x0856, CAMERA_SENSOR_I2C_TYPE_BYTE, "T3PROGSEQ_EN" },
+	{ 0x0858, CAMERA_SENSOR_I2C_TYPE_WORD, "T3POST" },
+	{ 0x030E, CAMERA_SENSOR_I2C_TYPE_WORD, "MIPI RATE" },
+};
+
+const uint32_t dump_addr_page1003[] = { 0x9262 };
+
+
+void cam_sensor_dbg_regdump_imx564_754(struct cam_sensor_ctrl_t* s_ctrl)
+{
+	uint32_t i;
+
+	int rc = 0;
+	int val = 0;
+
+	for (i = 0; i < sizeof(imx564_754_exp_addr_info) / sizeof(struct st_exposure_reg_dump_addr); i++)
+	{
+		rc = camera_io_dev_read(
+			&(s_ctrl->io_master_info),
+			imx564_754_exp_addr_info[i].addr,
+			&val, CAMERA_SENSOR_I2C_TYPE_WORD,
+			imx564_754_exp_addr_info[i].data_sz, false);
+
+		if (rc < 0)
+			CAM_ERR(CAM_SENSOR, "[SEN_DBG] read fail");
+		else {
+			CAM_INFO(CAM_SENSOR, "[SEN_DBG] addr:0x%4x  val:0x%4x //%s(%dB)",
+				imx564_754_exp_addr_info[i].addr, val,
+				imx564_754_exp_addr_info[i].addr_name,
+				imx564_754_exp_addr_info[i].data_sz);
+		}
+	}
+}
+
+void cam_sensor_dbg_regdump_gn3(struct cam_sensor_ctrl_t* s_ctrl)
+{
+	uint32_t i;
+
+	int rc = 0;
+	int val = 0;
+
+	for (i = 0; i < sizeof(gn3_dump_addr_arr) / sizeof(struct st_exposure_reg_dump_addr); i++)
+	{
+		rc = camera_io_dev_read(
+			&(s_ctrl->io_master_info),
+			gn3_dump_addr_arr[i].addr,
+			&val, CAMERA_SENSOR_I2C_TYPE_WORD,
+			gn3_dump_addr_arr[i].data_sz, false);
+
+		if (rc < 0)
+			CAM_ERR(CAM_SENSOR, "[SEN_DBG] read fail");
+		else {
+			CAM_INFO(CAM_SENSOR, "[SEN_DBG] addr:0x%4x  val:0x%4x //%s(%dB)",
+				gn3_dump_addr_arr[i].addr, val,
+				gn3_dump_addr_arr[i].addr_name,
+				gn3_dump_addr_arr[i].data_sz);
+		}
+	}
+}
+
+void cam_sensor_dbg_regdump_hp2(struct cam_sensor_ctrl_t* s_ctrl)
+{
+	struct cam_sensor_i2c_reg_setting dbg_reg_setting_p4000;
+	struct cam_sensor_i2c_reg_setting dbg_reg_setting_p1001;
+	struct cam_sensor_i2c_reg_setting dbg_reg_setting_p1000;
+	struct cam_sensor_i2c_reg_setting dbg_reg_setting_p1003;
+
+	uint32_t i;
+
+	int rc = 0;
+	int val = 0;
+	int size = 0;
+
+	size = ARRAY_SIZE(page_4000_reg_array);
+	dbg_reg_setting_p4000.reg_setting = kmalloc(sizeof(struct cam_sensor_i2c_reg_array) * size, GFP_KERNEL);
+	if (dbg_reg_setting_p4000.reg_setting != NULL) {
+		dbg_reg_setting_p4000.size = size;
+		dbg_reg_setting_p4000.addr_type = CAMERA_SENSOR_I2C_TYPE_WORD;
+		dbg_reg_setting_p4000.data_type = CAMERA_SENSOR_I2C_TYPE_WORD;
+		dbg_reg_setting_p4000.delay = 0;
+		memcpy(dbg_reg_setting_p4000.reg_setting, &page_4000_reg_array, sizeof(struct cam_sensor_i2c_reg_array) * size);
+	}
+
+	size = ARRAY_SIZE(page_1001_reg_array);
+	dbg_reg_setting_p1001.reg_setting = kmalloc(sizeof(struct cam_sensor_i2c_reg_array) * size, GFP_KERNEL);
+	if (dbg_reg_setting_p1001.reg_setting != NULL) {
+		dbg_reg_setting_p1001.size = size;
+		dbg_reg_setting_p1001.addr_type = CAMERA_SENSOR_I2C_TYPE_WORD;
+		dbg_reg_setting_p1001.data_type = CAMERA_SENSOR_I2C_TYPE_WORD;
+		dbg_reg_setting_p1001.delay = 0;
+		memcpy(dbg_reg_setting_p1001.reg_setting, &page_1001_reg_array, sizeof(struct cam_sensor_i2c_reg_array) * size);
+	}
+
+	size = ARRAY_SIZE(page_1000_reg_array);
+	dbg_reg_setting_p1000.reg_setting = kmalloc(sizeof(struct cam_sensor_i2c_reg_array) * size, GFP_KERNEL);
+	if (dbg_reg_setting_p1000.reg_setting != NULL) {
+		dbg_reg_setting_p1000.size = size;
+		dbg_reg_setting_p1000.addr_type = CAMERA_SENSOR_I2C_TYPE_WORD;
+		dbg_reg_setting_p1000.data_type = CAMERA_SENSOR_I2C_TYPE_WORD;
+		dbg_reg_setting_p1000.delay = 0;
+		memcpy(dbg_reg_setting_p1000.reg_setting, &page_1000_reg_array, sizeof(struct cam_sensor_i2c_reg_array) * size);
+	}
+
+	size = ARRAY_SIZE(page_1003_reg_array);
+	dbg_reg_setting_p1003.reg_setting = kmalloc(sizeof(struct cam_sensor_i2c_reg_array) * size, GFP_KERNEL);
+	if (dbg_reg_setting_p1003.reg_setting != NULL) {
+		dbg_reg_setting_p1003.size = size;
+		dbg_reg_setting_p1003.addr_type = CAMERA_SENSOR_I2C_TYPE_WORD;
+		dbg_reg_setting_p1003.data_type = CAMERA_SENSOR_I2C_TYPE_WORD;
+		dbg_reg_setting_p1003.delay = 0;
+		memcpy(dbg_reg_setting_p1003.reg_setting, &page_1003_reg_array, sizeof(struct cam_sensor_i2c_reg_array) * size);
+	}
+
+	/*
+	 *  page 4000
+	 */
+	rc = camera_io_dev_write(&s_ctrl->io_master_info, &dbg_reg_setting_p4000);
+	if (rc < 0)
+		CAM_ERR(CAM_SENSOR, "[SEN_DBG] Failed to write dbg_write_setting_4000 %d", rc);
+
+	for (i = 0; i < sizeof(hp2_exp_addr_info) / sizeof(struct st_exposure_reg_dump_addr); i++)
+	{
+		rc = camera_io_dev_read(
+			&(s_ctrl->io_master_info),
+			hp2_exp_addr_info[i].addr,
+			&val, CAMERA_SENSOR_I2C_TYPE_WORD,
+			hp2_exp_addr_info[i].data_sz, false);
+
+		if (rc < 0)
+			CAM_ERR(CAM_SENSOR, "[SEN_DBG] read fail");
+		else {
+			CAM_INFO(CAM_SENSOR, "[SEN_DBG] addr: 0x%4x  val: 0x%4x //%s",
+				hp2_exp_addr_info[i].addr, val, hp2_exp_addr_info[i].addr_name);
+		}
+	}
+
+
+	for (i = 0; i < sizeof(dump_addr_page4000) / sizeof(uint32_t); i++)
+	{
+		rc = camera_io_dev_read(
+			&(s_ctrl->io_master_info),
+			dump_addr_page4000[i],
+			&val, CAMERA_SENSOR_I2C_TYPE_WORD,
+			CAMERA_SENSOR_I2C_TYPE_WORD, false);
+
+		if (rc < 0)
+			CAM_ERR(CAM_SENSOR, "[SEN_DBG] read fail");
+		else {
+			CAM_INFO(CAM_SENSOR, "[SEN_DBG] PAGE_4000 addr:0x%4x  val:0x%4x",
+				dump_addr_page4000[i], val);
+		}
+	}
+
+
+	/*
+	 *  page 1001
+	 */
+	rc = camera_io_dev_write(&s_ctrl->io_master_info, &dbg_reg_setting_p1001);
+	if (rc < 0)
+		CAM_ERR(CAM_SENSOR, "[SEN_DBG] Failed to write dbg_write_setting_1001 %d", rc);
+
+	for (i = 0; i < sizeof(dump_addr_page1001) / sizeof(uint32_t); i++)
+	{
+		rc = camera_io_dev_read(
+			&(s_ctrl->io_master_info),
+			dump_addr_page1001[i],
+			&val, CAMERA_SENSOR_I2C_TYPE_WORD,
+			CAMERA_SENSOR_I2C_TYPE_WORD, false);
+
+		if (rc < 0)
+			CAM_ERR(CAM_SENSOR, "[SEN_DBG] read fail");
+		else {
+			CAM_INFO(CAM_SENSOR, "[SEN_DBG] PAGE_1001 addr:0x%4x  val:0x%4x",
+				dump_addr_page1001[i], val);
+		}
+	}
+
+	/*
+	 *  page 1000
+	 */
+	rc = camera_io_dev_write(&s_ctrl->io_master_info, &dbg_reg_setting_p1000);
+	if (rc < 0)
+		CAM_ERR(CAM_SENSOR, "[SEN_DBG] Failed to write dbg_write_setting_1000 %d", rc);
+
+	for (i = 0; i < sizeof(dump_addr_page1000) / sizeof(uint32_t); i++)
+	{
+		rc = camera_io_dev_read(
+			&(s_ctrl->io_master_info),
+			dump_addr_page1000[i],
+			&val, CAMERA_SENSOR_I2C_TYPE_WORD,
+			CAMERA_SENSOR_I2C_TYPE_WORD, false);
+
+		if (rc < 0)
+			CAM_ERR(CAM_SENSOR, "[SEN_DBG] read fail");
+		else {
+			CAM_INFO(CAM_SENSOR, "[SEN_DBG] PAGE_1000 addr:0x%4x  val:0x%4x",
+				dump_addr_page1000[i], val);
+		}
+	}
+
+	/*
+	 *  page 1003
+	 */
+	rc = camera_io_dev_write(&s_ctrl->io_master_info, &dbg_reg_setting_p1003);
+	if (rc < 0)
+		CAM_ERR(CAM_SENSOR, "[SEN_DBG] Failed to write dbg_write_setting_1003 %d", rc);
+
+	for (i = 0; i < sizeof(dump_addr_page1003) / sizeof(uint32_t); i++)
+	{
+		rc = camera_io_dev_read(
+			&(s_ctrl->io_master_info),
+			dump_addr_page1003[i],
+			&val, CAMERA_SENSOR_I2C_TYPE_WORD,
+			CAMERA_SENSOR_I2C_TYPE_WORD, false);
+
+		if (rc < 0)
+			CAM_ERR(CAM_SENSOR, "[SEN_DBG] read fail");
+		else {
+			CAM_INFO(CAM_SENSOR, "[SEN_DBG] PAGE_1003 addr:0x%4x  val:0x%4x",
+				dump_addr_page1003[i], val);
+		}
+	}
+
+	if (dbg_reg_setting_p4000.reg_setting != NULL) {
+		kfree(dbg_reg_setting_p4000.reg_setting);
+		dbg_reg_setting_p4000.reg_setting = NULL;
+	}
+	if (dbg_reg_setting_p1001.reg_setting != NULL) {
+		kfree(dbg_reg_setting_p1001.reg_setting);
+		dbg_reg_setting_p1001.reg_setting = NULL;
+	}
+	if (dbg_reg_setting_p1000.reg_setting != NULL) {
+		kfree(dbg_reg_setting_p1000.reg_setting);
+		dbg_reg_setting_p1000.reg_setting = NULL;
+	}
+	if (dbg_reg_setting_p1003.reg_setting != NULL) {
+		kfree(dbg_reg_setting_p1003.reg_setting);
+		dbg_reg_setting_p1003.reg_setting = NULL;
+	}
+}
+
+
+void cam_sensor_dbg_regdump(struct cam_sensor_ctrl_t* s_ctrl)
+{
+	cam_sensor_dbg_print_vc(s_ctrl);
+
+	switch (s_ctrl->sensordata->slave_info.sensor_id)
+	{
+	case SENSOR_ID_S5KHP2:
+		cam_sensor_dbg_regdump_hp2(s_ctrl);
+		break;
+	case SENSOR_ID_S5KGN3:
+		cam_sensor_dbg_regdump_gn3(s_ctrl);
+		break;
+	case SENSOR_ID_IMX564:
+	case SENSOR_ID_IMX754:
+		cam_sensor_dbg_regdump_imx564_754(s_ctrl);
+		break;
+	default:
+		CAM_ERR(CAM_SENSOR, "[SEN_DBG] not supported %d", s_ctrl->sensordata->slave_info.sensor_id);
+		break;
+	}
+}
+
+
+const uint32_t dump_addr_when_stream_on_fail_hp2[] = {
+	0xA200, 0xA202, 0xA204, 0xA206, 0xA20A,
+};
+
+void cam_sensor_dbg_regdump_stream_on_fail_hp2(struct cam_sensor_ctrl_t* s_ctrl)
+{
+	struct cam_sensor_i2c_reg_setting dbg_reg_page4000;
+	struct cam_sensor_i2c_reg_setting dbg_reg_page1001;
+	uint32_t i;
+
+	int32_t rc = 0;
+	uint32_t val = 0;
+	uint32_t size = 0;
+
+	size = ARRAY_SIZE(page_4000_reg_array);
+	dbg_reg_page4000.reg_setting = kmalloc(sizeof(struct cam_sensor_i2c_reg_array) * size, GFP_KERNEL);
+	if (dbg_reg_page4000.reg_setting != NULL) {
+		dbg_reg_page4000.size = size;
+		dbg_reg_page4000.addr_type = CAMERA_SENSOR_I2C_TYPE_WORD;
+		dbg_reg_page4000.data_type = CAMERA_SENSOR_I2C_TYPE_WORD;
+		dbg_reg_page4000.delay = 0;
+		memcpy(dbg_reg_page4000.reg_setting, &page_4000_reg_array, sizeof(struct cam_sensor_i2c_reg_array) * size);
+	}
+
+	size = ARRAY_SIZE(page_1001_reg_array);
+	dbg_reg_page1001.reg_setting = kmalloc(sizeof(struct cam_sensor_i2c_reg_array) * size, GFP_KERNEL);
+	if (dbg_reg_page1001.reg_setting != NULL) {
+		dbg_reg_page1001.size = size;
+		dbg_reg_page1001.addr_type = CAMERA_SENSOR_I2C_TYPE_WORD;
+		dbg_reg_page1001.data_type = CAMERA_SENSOR_I2C_TYPE_WORD;
+		dbg_reg_page1001.delay = 0;
+		memcpy(dbg_reg_page1001.reg_setting, &page_1001_reg_array, sizeof(struct cam_sensor_i2c_reg_array) * size);
+	}
+
+	// page 1001
+	rc = camera_io_dev_write(&s_ctrl->io_master_info, &dbg_reg_page1001);
+	if (rc < 0)
+		CAM_ERR(CAM_SENSOR, "[SEN_DBG] Failed to write dbg_write_setting_1001 %d", rc);
+
+	for (i = 0; i < sizeof(dump_addr_when_stream_on_fail_hp2) / sizeof(uint32_t); i++)
+	{
+		rc = camera_io_dev_read(
+			&(s_ctrl->io_master_info),
+			dump_addr_when_stream_on_fail_hp2[i],
+			&val, CAMERA_SENSOR_I2C_TYPE_WORD,
+			CAMERA_SENSOR_I2C_TYPE_WORD, false);
+
+		if (rc < 0)
+			CAM_ERR(CAM_SENSOR, "[SEN_DBG] read fail");
+		else {
+			CAM_INFO(CAM_SENSOR, "[SEN_DBG] addr:0x%4x val:0x%4x",
+				dump_addr_when_stream_on_fail_hp2[i], val);
+		}
+	}
+
+	// page 4000
+	rc = camera_io_dev_write(&s_ctrl->io_master_info, &dbg_reg_page4000);
+	if (rc < 0)
+		CAM_ERR(CAM_SENSOR, "[SEN_DBG] Failed to write dbg_write_setting_4000 %d", rc);
+
+	if (dbg_reg_page4000.reg_setting != NULL) {
+		kfree(dbg_reg_page4000.reg_setting);
+		dbg_reg_page4000.reg_setting = NULL;
+	}
+	if (dbg_reg_page1001.reg_setting != NULL) {
+		kfree(dbg_reg_page1001.reg_setting);
+		dbg_reg_page1001.reg_setting = NULL;
+	}
+}
+
+
+void cam_sensor_dbg_regdump_stream_on_fail(struct cam_sensor_ctrl_t* s_ctrl)
+{
+	switch (s_ctrl->sensordata->slave_info.sensor_id)
+	{
+	case SENSOR_ID_S5KHP2:
+		cam_sensor_dbg_regdump_stream_on_fail_hp2(s_ctrl);
+		break;
+	default:
+		CAM_DBG(CAM_SENSOR, "[SEN_DBG] not supported 0x%x", s_ctrl->sensordata->slave_info.sensor_id);
+		return;
+	}
+}
+
+
+int cam_sensor_process_evt_for_sensor_using_i2c(struct cam_req_mgr_link_evt_data* evt_data)
+{
+	int                       rc = 0;
+	struct cam_sensor_ctrl_t* s_ctrl = NULL;
+
+	if (!evt_data)
+		return -EINVAL;
+
+	s_ctrl = (struct cam_sensor_ctrl_t*)
+		cam_get_device_priv(evt_data->dev_hdl);
+	if (!s_ctrl) {
+		CAM_ERR(CAM_SENSOR, "Device data is NULL");
+		return -EINVAL;
+	}
+
+	CAM_DBG(CAM_SENSOR, "Received evt:%d", evt_data->evt_type);
+
+	mutex_lock(&(s_ctrl->cam_sensor_mutex));
+
+	switch (evt_data->evt_type) {
+	case CAM_REQ_MGR_LINK_EVT_SOF_FREEZE:
+	case CAM_REQ_MGR_LINK_EVT_ERR:
+		CAM_INFO(CAM_SENSOR, "[FREEZE_DBG][%s] sof freeze proc_evt %d", s_ctrl->sensor_name,
+			evt_data->evt_type);
+		to_dump_when_sof_freeze__sen_id = s_ctrl->sensordata->slave_info.sensor_id;
+		break;
+	default:
+		/* No handling */
+		break;
+	}
+
+	mutex_unlock(&(s_ctrl->cam_sensor_mutex));
+	return rc;
+}
+#endif

@@ -49,9 +49,6 @@
 #define CAM_REQ_MGR_MAX_HANDLES_V2        256
 #define MAX_LINKS_PER_SESSION             2
 
-/* Interval for cam_info_rate_limit_custom() */
-#define CAM_RATE_LIMIT_INTERVAL_5SEC 5
-
 /* V4L event type which user space will subscribe to */
 #define V4L_EVENT_CAM_REQ_MGR_EVENT       (V4L2_EVENT_PRIVATE_START + 0)
 
@@ -662,6 +659,7 @@ struct cam_mem_cpu_access_op {
  * @CAM_REQ_MGR_CSID_MISSING_EOT               : CSID is missing EOT on one or more lanes
  * @CAM_REQ_MGR_CSID_RX_PKT_PAYLOAD_CORRUPTION : CSID long packet payload CRC mismatch
  * @CAM_REQ_MGR_SENSOR_STREAM_OFF_FAILED       : Failed to stream off sensor
+ * @CAM_REQ_MGR_VALID_SHUTTER_DROPPED          : Indicates a valid shutter was dropped
  */
 #define CAM_REQ_MGR_ISP_UNREPORTED_ERROR                 0
 #define CAM_REQ_MGR_LINK_STALLED_ERROR                   BIT(0)
@@ -679,6 +677,7 @@ struct cam_mem_cpu_access_op {
 #define CAM_REQ_MGR_CSID_MISSING_EOT                     BIT(12)
 #define CAM_REQ_MGR_CSID_RX_PKT_PAYLOAD_CORRUPTION       BIT(13)
 #define CAM_REQ_MGR_SENSOR_STREAM_OFF_FAILED             BIT(14)
+#define CAM_REQ_MGR_VALID_SHUTTER_DROPPED                BIT(15)
 
 /**
  * struct cam_req_mgr_error_msg

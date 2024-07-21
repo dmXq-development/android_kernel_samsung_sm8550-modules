@@ -135,6 +135,7 @@ struct cam_irq_controller {
 	bool                            is_dependent;
 	struct cam_irq_controller      *dependent_controller[CAM_IRQ_MAX_DEPENDENTS];
 	bool                            delayed_global_clear;
+	atomic_t                        counter;
 
 #ifdef CONFIG_CAM_PRESIL
 	struct mutex                    lock;
@@ -305,14 +306,15 @@ static inline void cam_irq_controller_clear_irq(
 	for (i = 0; i < controller->num_registers; i++) {
 		irq_register = &controller->irq_register_arr[i];
 		cam_io_w_mb(evt_handler->evt_bit_mask_arr[i],
-				controller->mem_base +
-				irq_register->clear_reg_offset);
+			controller->mem_base +
+			irq_register->clear_reg_offset);
 	}
 
-	if (controller->global_irq_cmd_offset)
+	if (controller->global_irq_cmd_offset) {
 		cam_io_w_mb(controller->global_clear_bitmask,
-				controller->mem_base +
-				controller->global_irq_cmd_offset);
+			controller->mem_base +
+			controller->global_irq_cmd_offset);
+	}
 }
 
 int cam_irq_controller_deinit(void **irq_controller)
@@ -426,6 +428,7 @@ int cam_irq_controller_init(const char       *name,
 	controller->clear_all_bitmask    = register_info->clear_all_bitmask;
 	controller->mem_base             = mem_base;
 	controller->is_dependent         = false;
+	atomic_set(&controller->counter, 0);
 
 	CAM_DBG(CAM_IRQ_CTRL, "global_clear_bitmask: 0x%x",
 		controller->global_clear_bitmask);
@@ -498,6 +501,7 @@ static inline void __cam_irq_controller_disable_irq_evt(
 		irq_register->aggr_mask &= ~update_mask[i];
 	}
 }
+
 
 static inline void __cam_irq_controller_enable_irq(
 	struct cam_irq_controller  *controller,
@@ -755,8 +759,13 @@ int cam_irq_controller_unsubscribe_irq_evt(void *irq_controller,
 	list_del_init(&evt_handler->list_node);
 	list_del_init(&evt_handler->th_list_node);
 
+	atomic_set(&controller->counter, 0xEE);
 	__cam_irq_controller_disable_irq_evt(controller, evt_handler);
+
+	atomic_set(&controller->counter, 0xFF);
 	cam_irq_controller_clear_irq(controller, evt_handler);
+
+	atomic_set(&controller->counter, 0xFFEE);
 
 	kfree(evt_handler->evt_bit_mask_arr);
 	kfree(evt_handler);
@@ -842,9 +851,11 @@ static void __cam_irq_controller_th_processing(
 			rc = irq_bh_api->get_bh_payload_func(
 				evt_handler->bottom_half, &bh_cmd);
 			if (rc || !bh_cmd) {
-				CAM_ERR_RATE_LIMIT(CAM_ISP,
-					"No payload, IRQ handling frozen for %s",
-					controller->name);
+				for (i = 0; i < controller->num_registers; i++) {
+					CAM_ERR_RATE_LIMIT(CAM_ISP,
+						"No payload, IRQ handling frozen for %s failed to process evt status_%d: 0x%x",
+						controller->name, i, th_payload->evt_status_arr[i]);
+				}
 				continue;
 			}
 		}
@@ -892,7 +903,7 @@ void cam_irq_controller_disable_all(void *priv)
 	for (i = 0; i < controller->num_registers; i++) {
 		irq_register = &controller->irq_register_arr[i];
 		memset(irq_register->top_half_enable_mask, 0,
-			 sizeof(irq_register->top_half_enable_mask));
+			sizeof(irq_register->top_half_enable_mask));
 		irq_register->aggr_mask = 0;
 		cam_io_w_mb(0x0, controller->mem_base + irq_register->mask_reg_offset);
 		cam_io_w_mb(controller->clear_all_bitmask, controller->mem_base +

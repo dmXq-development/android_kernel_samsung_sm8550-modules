@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/init.h>
@@ -916,9 +916,6 @@ static int cam_sync_dma_fence_cb(
 			sync_obj, row->name, status, rc);
 		goto end;
 	}
-
-	/* Adding dma fence reference on sync */
-	atomic_inc(&row->ref_cnt);
 
 	if (!atomic_dec_and_test(&row->ref_cnt))
 		goto end;
@@ -1907,7 +1904,7 @@ static int cam_sync_component_bind(struct device *dev,
 	int idx;
 	struct platform_device *pdev = to_platform_device(dev);
 
-	sync_dev = kzalloc(sizeof(*sync_dev), GFP_KERNEL);
+	sync_dev = vzalloc(sizeof(*sync_dev));
 	if (!sync_dev)
 		return -ENOMEM;
 
@@ -1916,8 +1913,6 @@ static int cam_sync_component_bind(struct device *dev,
 
 	for (idx = 0; idx < CAM_SYNC_MAX_OBJS; idx++)
 		spin_lock_init(&sync_dev->row_spinlocks[idx]);
-
-	sync_dev->sync_table = vzalloc(sizeof(struct sync_table_row) * CAM_SYNC_MAX_OBJS);
 
 	sync_dev->vdev = video_device_alloc();
 	if (!sync_dev->vdev) {
@@ -2005,9 +2000,8 @@ mcinit_fail:
 	video_unregister_device(sync_dev->vdev);
 	video_device_release(sync_dev->vdev);
 vdev_fail:
-	vfree(sync_dev->sync_table);
 	mutex_destroy(&sync_dev->table_lock);
-	kfree(sync_dev);
+	vfree(sync_dev);
 	return rc;
 }
 
@@ -2029,7 +2023,6 @@ static void cam_sync_component_unbind(struct device *dev,
 	for (i = 0; i < CAM_SYNC_MAX_OBJS; i++)
 		spin_lock_init(&sync_dev->row_spinlocks[i]);
 
-	vfree(sync_dev->sync_table);
 	kfree(sync_dev);
 	sync_dev = NULL;
 }

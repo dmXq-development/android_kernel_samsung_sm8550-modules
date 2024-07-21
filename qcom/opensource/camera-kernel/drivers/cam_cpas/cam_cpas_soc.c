@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/device.h>
@@ -568,6 +568,11 @@ static int cam_cpas_parse_node_tree(struct cam_cpas *cpas_core,
 				if (soc_private->enable_cam_ddr_drv) {
 					rc = of_property_read_u32(curr_node, "drv-voting-index",
 						&curr_node_ptr->drv_voting_idx);
+					if (rc) {
+						CAM_ERR(CAM_CPAS, "Drv voting index not found");
+						return rc;
+					}
+
 					if (curr_node_ptr->drv_voting_idx == CAM_CPAS_PORT_DRV_DYN)
 						curr_client->is_drv_dyn = true;
 
@@ -606,6 +611,8 @@ static int cam_cpas_parse_node_tree(struct cam_cpas *cpas_core,
 	return 0;
 }
 
+
+
 int cam_cpas_get_hw_features(struct platform_device *pdev,
 	struct cam_cpas_private_soc *soc_private)
 {
@@ -622,9 +629,11 @@ int cam_cpas_get_hw_features(struct platform_device *pdev,
 
 	CAM_DBG(CAM_CPAS, "fuse info elements count %d", count);
 
-	if (count <= 0)
+	if (count <= 0) {
+		CAM_INFO(CAM_CPAS, "No or invalid fuse entries count: %d",
+			count);
 		goto end;
-	else if (count%5 != 0) {
+	} else if (count%5 != 0) {
 		CAM_INFO(CAM_CPAS, "fuse entries should be multiple of 5 %d",
 			count);
 		goto end;
@@ -1138,7 +1147,7 @@ int cam_cpas_get_custom_dt_info(struct cam_hw_info *cpas_hw,
 		}
 
 		cpas_core->cpas_client[i] =
-			kzalloc(sizeof(struct cam_cpas_client), GFP_KERNEL);
+			kvzalloc(sizeof(struct cam_cpas_client), GFP_KERNEL);
 		if (!cpas_core->cpas_client[i]) {
 			rc = -ENOMEM;
 			goto cleanup_clients;

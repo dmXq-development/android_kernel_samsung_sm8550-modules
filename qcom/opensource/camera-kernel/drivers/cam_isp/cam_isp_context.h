@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CAM_ISP_CONTEXT_H_
@@ -59,8 +59,14 @@
 /* AEB error count threshold */
 #define CAM_ISP_CONTEXT_AEB_ERROR_CNT_MAX 3
 
-/* Debug Buffer length*/
-#define CAM_ISP_CONTEXT_DBG_BUF_LEN 300
+/*
+ * Congestion count threshold
+ */
+#define CAM_ISP_CONTEXT_CONGESTION_CNT_MAX 3
+
+/* Maximum entries in frame record */
+#define CAM_ISP_CTX_MAX_FRAME_RECORDS  5
+
 
 /* forward declaration */
 struct cam_isp_context;
@@ -239,6 +245,56 @@ struct cam_isp_context_event_record {
 };
 
 /**
+ *
+ *
+ * struct cam_isp_context_frame_timing_record - Frame timing events
+ *
+ * @sof_ts:           SOF timestamp
+ * @eof_ts:           EOF ts
+ * @epoch_ts:         EPOCH ts
+ * @secondary_sof_ts: Secondary SOF ts
+ *
+ */
+struct cam_isp_context_frame_timing_record {
+	struct timespec64 sof_ts;
+	struct timespec64 eof_ts;
+	struct timespec64 epoch_ts;
+	struct timespec64 secondary_sof_ts;
+};
+
+
+/**
+ *
+ *
+ * struct cam_isp_context_debug_monitors - ISP context debug monitors
+ *
+ * @state_monitor_head:        State machine monitor head
+ * @state_monitor:             State machine monitor info
+ * @event_record_head:         Request Event monitor head
+ * @event_record:              Request event monitor info
+ * @frame_monitor_head:        Frame timing monitor head
+ * @frame_monitor:             Frame timing event monitor
+ *
+ */
+struct cam_isp_context_debug_monitors {
+	/* State machine monitoring */
+	atomic64_t                           state_monitor_head;
+	struct cam_isp_context_state_monitor state_monitor[
+		CAM_ISP_CTX_STATE_MONITOR_MAX_ENTRIES];
+
+	/* Req event monitor */
+	atomic64_t                            event_record_head[
+		CAM_ISP_CTX_EVENT_MAX];
+	struct cam_isp_context_event_record   event_record[
+		CAM_ISP_CTX_EVENT_MAX][CAM_ISP_CTX_EVENT_RECORD_MAX_ENTRIES];
+
+	/* Frame timing monitor */
+	atomic64_t                            frame_monitor_head;
+	struct cam_isp_context_frame_timing_record frame_monitor[
+		CAM_ISP_CTX_MAX_FRAME_RECORDS];
+};
+
+/**
  * struct cam_isp_context   -  ISP context object
  *
  * @base:                      Common context object pointer
@@ -266,11 +322,10 @@ struct cam_isp_context_event_record {
  * @aeb_error_cnt:             Count number of times a specific AEB error scenario is
  *                             enountered
  * @out_of_sync_cnt:           Out of sync error count for AEB
- * @state_monitor_head:        Write index to the state monitoring array
+ * @congestion_cnt: 		   Count number of times congestion was encountered
+ *							   consecutively
  * @req_info                   Request id information about last buf done
- * @cam_isp_ctx_state_monitor: State monitoring array
- * @event_record_head:         Write index to the state monitoring array
- * @event_record:              Event record array
+ * @dbg_monitors:              Debug monitors for ISP context
  * @rdi_only_context:          Get context type information.
  *                             true, if context is rdi only context
  * @offline_context:           Indicate whether context is for offline IFE
@@ -282,6 +337,7 @@ struct cam_isp_context_event_record {
  * @custom_enabled:            Custom HW enabled for this ctx
  * @use_frame_header_ts:       Use frame header for qtimer ts
  * @support_consumed_addr:     Indicate whether HW has last consumed addr reg
+ * @sof_dbg_irq_en:            Indicates whether ISP context has enabled debug irqs
  * @apply_in_progress          Whether request apply is in progress
  * @use_default_apply:         Use default settings in case of frame skip
  * @init_timestamp:            Timestamp at which this context is initialized
@@ -292,22 +348,17 @@ struct cam_isp_context_event_record {
  * @trigger_id:                ID provided by CRM for each ctx on the link
  * @last_bufdone_err_apply_req_id:  last bufdone error apply request id
  * @v4l2_event_sub_ids         contains individual bits representing subscribed v4l2 ids
- * @aeb_enabled:               Indicate if stream is for AEB
- * @do_internal_recovery:      Enable KMD halt/reset/resume internal recovery
- * @last_sof_jiffies:          Record the jiffies of last sof
- * @last_applied_jiffies:      Record the jiffiest of last applied req
  * @mswitch_default_apply_delay_max_cnt: Max mode switch delay among all devices connected
- *                                       on the same link as this ISP context
+ *                             on the same link as this ISP context
  * @mswitch_default_apply_delay_ref_cnt: Ref cnt for this context to decide when to apply
- *                                       mode switch settings
+ *                             mode switch settings
+ * @aeb_enabled:               Indicate if stream is for AEB
  * @handle_mswitch:            Indicates if IFE needs to explicitly handle mode switch
- *                             on frame skip callback from request manager.
- *                             This is decided based on the max mode switch delay published
- *                             by other devices on the link as part of link setup
+ *                             on frame skip callback from CRM. This is decided
+ *                             based on the max mode switch delay published by  other
+ *                             devices on the link as part of link setup
  * @mode_switch_en:            Indicates if mode switch is enabled
- * @is_shdr:                   true, if usecase is sdhr
- * @is_shdr_master:            Flag to indicate master context in shdr usecase
- * @last_num_exp:              Last num of exposure
+ * @do_internal_recovery:      Enable KMD halt/reset/resume internal recovery
  *
  */
 struct cam_isp_context {
@@ -336,14 +387,9 @@ struct cam_isp_context {
 	uint32_t                         bubble_frame_cnt;
 	uint32_t                         aeb_error_cnt;
 	uint32_t                         out_of_sync_cnt;
-	atomic64_t                       state_monitor_head;
-	struct cam_isp_context_state_monitor cam_isp_ctx_state_monitor[
-		CAM_ISP_CTX_STATE_MONITOR_MAX_ENTRIES];
+	uint32_t                         congestion_cnt;
 	struct cam_isp_context_req_id_info    req_info;
-	atomic64_t                            event_record_head[
-		CAM_ISP_CTX_EVENT_MAX];
-	struct cam_isp_context_event_record   event_record[
-		CAM_ISP_CTX_EVENT_MAX][CAM_ISP_CTX_EVENT_RECORD_MAX_ENTRIES];
+	struct cam_isp_context_debug_monitors dbg_monitors;
 	bool                                  rdi_only_context;
 	bool                                  offline_context;
 	bool                                  vfps_aux_context;
@@ -354,6 +400,7 @@ struct cam_isp_context {
 	bool                                  custom_enabled;
 	bool                                  use_frame_header_ts;
 	bool                                  support_consumed_addr;
+	bool                                  sof_dbg_irq_en;
 	atomic_t                              apply_in_progress;
 	atomic_t                              internal_recovery_set;
 	bool                                  use_default_apply;
@@ -364,18 +411,13 @@ struct cam_isp_context {
 	int32_t                               trigger_id;
 	int64_t                               last_bufdone_err_apply_req_id;
 	uint32_t                              v4l2_event_sub_ids;
-	struct cam_hw_err_param              err_inject_params;
-	bool                                  aeb_enabled;
-	bool                                  do_internal_recovery;
-	uint64_t                              last_sof_jiffies;
-	uint64_t                              last_applied_jiffies;
 	int32_t                               mswitch_default_apply_delay_max_cnt;
 	atomic_t                              mswitch_default_apply_delay_ref_cnt;
+	struct cam_hw_err_param              err_inject_params;
+	bool                                  aeb_enabled;
 	bool                                  handle_mswitch;
 	bool                                  mode_switch_en;
-	bool                                  is_tfe_shdr;
-	bool                                  is_shdr_master;
-	uint32_t                              last_num_exp;
+	bool                                  do_internal_recovery;
 };
 
 /**

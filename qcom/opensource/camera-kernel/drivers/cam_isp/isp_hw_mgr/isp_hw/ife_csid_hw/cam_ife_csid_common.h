@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CAM_IFE_CSID_COMMON_H_
@@ -75,7 +75,6 @@
 #define CAM_IFE_CSID_BIN_VERTICAL                         BIT(2)
 
 #define CAM_IFE_CSID_WIDTH_FUSE_VAL_MAX			  4
-#define CAM_IFE_CSID_IN_RES_MAX				  (CAM_ISP_IFE_IN_RES_PHY_7 + 1)
 
 /* factor to conver qtime to boottime */
 extern int64_t qtime_to_boottime;
@@ -324,6 +323,12 @@ struct cam_ife_csid_debug_info {
 	uint32_t                          test_bus_val;
 	bool                              rx_capture_debug_set;
 	bool                              test_bus_enabled;
+#if defined(CONFIG_SAMSUNG_DEBUG_SENSOR_FPS)
+	uint32_t                          dbg_fps;
+#endif
+#if defined(CONFIG_SAMSUNG_DEBUG_SENSOR_TIMING_REC)
+	uint32_t                          sof_path_mask;
+#endif
 };
 
 /*
