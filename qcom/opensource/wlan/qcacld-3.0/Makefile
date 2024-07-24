@@ -12,6 +12,7 @@ KERNEL_SRC ?= /lib/modules/$(shell uname -r)/build
 M ?= $(shell pwd)
 
 ifeq ($(WLAN_ROOT),)
+ifeq ($(CONFIG_SEC_PLATFORM_DM3Q), y)
 KBUILD_OPTIONS += \
     WLAN_ROOT=$(KERNEL_SRC)/$(M) \
     WLAN_PLATFORM_ROOT=$(KERNEL_SRC)/$(M)/../platform \
@@ -19,6 +20,7 @@ KBUILD_OPTIONS += \
     WLAN_COMMON_INC=$(KERNEL_SRC)/$(M)/cmn \
     WLAN_FW_API=$(KERNEL_SRC)/$(M)/../fw-api \
     CONFIG_QCA_CLD_WLAN=m \
+    CONFIG_CNSS_KIWI_V2=y \
     CONFIG_CNSS_OUT_OF_TREE=y \
     CONFIG_CNSS2=m \
     CONFIG_CNSS2_QMI=y \
@@ -29,23 +31,37 @@ KBUILD_OPTIONS += \
     CONFIG_CNSS_UTILS=m \
     CONFIG_CNSS_HW_SECURE_DISABLE=y \
     CONFIG_BUS_AUTO_SUSPEND=y \
-    BOARD_PLATFORM=kalama \
-    WLAN_CTRL_NAME=wlan
-
-ifeq ($(CONFIG_SEC_PLATFORM_DM3Q), y)
-KBUILD_OPTIONS += \
-    CONFIG_CNSS_KIWI_V2=y \
     WLAN_PROFILE=kiwi_v2 \
     DYNAMIC_SINGLE_CHIP=kiwi_v2 \
     MODNAME=qca_cld3_kiwi_v2 \
-    DEVNAME=kiwi_v2
+    DEVNAME=kiwi_v2 \
+    BOARD_PLATFORM=kalama \
+    WLAN_CTRL_NAME=wlan
 else
 KBUILD_OPTIONS += \
+    WLAN_ROOT=$(KERNEL_SRC)/$(M) \
+    WLAN_PLATFORM_ROOT=$(KERNEL_SRC)/$(M)/../platform \
+    WLAN_COMMON_ROOT=cmn \
+    WLAN_COMMON_INC=$(KERNEL_SRC)/$(M)/cmn \
+    WLAN_FW_API=$(KERNEL_SRC)/$(M)/../fw-api \
+    CONFIG_QCA_CLD_WLAN=m \
     CONFIG_CNSS_QCA6490=y \
+    CONFIG_CNSS_OUT_OF_TREE=y \
+    CONFIG_CNSS2=m \
+    CONFIG_CNSS2_QMI=y \
+    CONFIG_CNSS_QMI_SVC=m \
+    CONFIG_CNSS_PLAT_IPC_QMI_SVC=m \
+    CONFIG_CNSS_GENL=m \
+    CONFIG_WCNSS_MEM_PRE_ALLOC=m \
+    CONFIG_CNSS_UTILS=m \
+    CONFIG_CNSS_HW_SECURE_DISABLE=y \
+    CONFIG_BUS_AUTO_SUSPEND=y \
     WLAN_PROFILE=qca6490 \
     DYNAMIC_SINGLE_CHIP=qca6490 \
     MODNAME=qca_cld3_qca6490 \
-    DEVNAME=qca6490
+    DEVNAME=qca6490 \
+    BOARD_PLATFORM=kalama \
+    WLAN_CTRL_NAME=wlan
 endif
 endif
 
