@@ -40,13 +40,9 @@ ifeq ($(KERNEL_BUILD), 0)
 		include $(AUDIO_ROOT)/config/waipioauto.conf
 		INCS    +=  -include $(AUDIO_ROOT)/config/waipioautoconf.h
 	endif
-	ifeq ($(CONFIG_ARCH_KALAMA), y)
+	ifeq ($(CONFIG_ARCH_CROW), y)
 		include $(AUDIO_ROOT)/config/kalamaauto.conf
 		INCS    +=  -include $(AUDIO_ROOT)/config/kalamaautoconf.h
-	endif
-	ifeq ($(CONFIG_ARCH_CROW), y)
-		include $(AUDIO_ROOT)/config/crowauto.conf
-		INCS    +=  -include $(AUDIO_ROOT)/config/crowautoconf.h
 	endif
 endif
 

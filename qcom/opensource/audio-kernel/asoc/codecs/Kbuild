@@ -66,8 +66,8 @@ ifeq ($(KERNEL_BUILD), 0)
 		INCS    +=  -include $(AUDIO_ROOT)/config/kalamaautoconf.h
 	endif
 	ifeq ($(CONFIG_ARCH_CROW), y)
-		include $(AUDIO_ROOT)/config/crowauto.conf
-		INCS    +=  -include $(AUDIO_ROOT)/config/crowautoconf.h
+		include $(AUDIO_ROOT)/config/kalamaauto.conf
+		INCS    +=  -include $(AUDIO_ROOT)/config/kalamaautoconf.h
 	endif
 	ifeq ($(CONFIG_ARCH_LITO), y)
 		include $(AUDIO_ROOT)/config/litoauto.conf
@@ -268,7 +268,6 @@ ifeq ($(KERNEL_BUILD), 1)
 	obj-y	+= wcd934x/
 	obj-y	+= wcd937x/
 	obj-y	+= wcd938x/
-	obj-y	+= wcd939x/
 	obj-y	+= bolero/
 	obj-y	+= lpass-cdc/
 	obj-y	+= wsa884x/
@@ -322,3 +321,6 @@ hdmi_dlkm-y := $(HDMICODEC_OBJS)
 
 obj-$(CONFIG_SND_SWR_HAPTICS) += swr_haptics_dlkm.o
 swr_haptics_dlkm-y := $(SWR_HAP_OBJS)
+
+# inject some build related information
+DEFINES += -DBUILD_TIMESTAMP=\"$(shell date -u +'%Y-%m-%dT%H:%M:%SZ')\"

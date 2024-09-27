@@ -9,7 +9,6 @@
 #include <linux/platform_device.h>
 #include <linux/slab.h>
 #include <linux/of_device.h>
-#include <linux/arch_topology.h>
 #include <sound/control.h>
 #include <sound/core.h>
 #include <sound/soc.h>
@@ -22,10 +21,6 @@
 #include <dsp/digital-cdc-rsc-mgr.h>
 
 #include "msm_common.h"
-
-#ifndef topology_cluster_id
-#define topology_cluster_id(cpu) topology_physical_package_id(cpu)
-#endif
 
 struct snd_card_pdata {
 	struct kobject snd_card_kobj;
@@ -52,8 +47,6 @@ struct snd_card_pdata {
 #define SAMPLING_RATE_176P4KHZ  176400
 #define SAMPLING_RATE_352P8KHZ  352800
 
-struct mutex vote_against_sleep_lock;
-
 static struct attribute device_state_attr = {
 	.name = "state",
 	.mode = 0660,
@@ -79,7 +72,6 @@ struct chmap_pdata {
 };
 
 #define MAX_USR_INPUT 10
-#define MAX_CPU_CLUSTER 3 /*Silver, Gold, Prime*/
 
 static int qos_vote_status;
 static bool lpi_pcm_logging_enable;
@@ -88,7 +80,9 @@ static unsigned int vote_against_sleep_cnt;
 
 static struct dev_pm_qos_request latency_pm_qos_req; /* pm_qos request */
 static unsigned int qos_client_active_cnt;
-static int cluster_first_cpu[MAX_CPU_CLUSTER] = {-1, };
+/* set audio task affinity to core 0 & 1 & 2 & 3 */
+static const unsigned int audio_core_list[] = {0, 1, 2, 3};
+static cpumask_t audio_cpu_map = CPU_MASK_NONE;
 static struct dev_pm_qos_request *msm_audio_req = NULL;
 static bool kregister_pm_qos_latency_controls = false;
 #define MSM_LL_QOS_VALUE	300 /* time in us to ensure LPM doesn't go in C3/C4 */
@@ -166,13 +160,8 @@ int snd_card_notify_user(snd_card_status_t card_status)
 {
 	snd_card_pdata->card_status = card_status;
 	sysfs_notify(&snd_card_pdata->snd_card_kobj, NULL, "card_state");
-	if (card_status == 0) {
-		mutex_lock(&vote_against_sleep_lock);
+	if (card_status == 0)
 		vote_against_sleep_cnt = 0;
-		pr_debug("%s: SSR/PDR triggered reset vote_against_sleep_cnt = %d\n",
-					__func__, vote_against_sleep_cnt);
-		mutex_unlock(&vote_against_sleep_lock);
-	}
 	return 0;
 }
 
@@ -232,6 +221,34 @@ fail_create_file:
 	kobject_put(&snd_card_pdata->snd_card_kobj);
 done:
 	return ret;
+}
+
+static void check_userspace_service_state(struct snd_soc_pcm_runtime *rtd,
+						struct msm_common_pdata *pdata)
+{
+	uint32_t i;
+
+	dev_info(rtd->card->dev,"%s: pcm_id %d state %d\n", __func__,
+			rtd->num, pdata->aud_dev_state[rtd->num]);
+
+	mutex_lock(&pdata->aud_dev_lock);
+	if (pdata->aud_dev_state[rtd->num] == DEVICE_ENABLE) {
+		dev_info(rtd->card->dev, "%s userspace service crashed\n",
+				__func__);
+		/*Reset the state as sysfs node wont be triggred*/
+		pdata->aud_dev_state[rtd->num] = DEVICE_DISABLE;
+		for (i = 0; i < pdata->num_aud_devs; i++) {
+			if (pdata->aud_dev_state[i] == DEVICE_ENABLE)
+				goto exit;
+		}
+		/*Issue close all graph cmd to DSP*/
+		spf_core_apm_close_all();
+		/*unmap all dma mapped buffers*/
+		msm_audio_ion_crash_handler();
+	}
+exit:
+	mutex_unlock(&pdata->aud_dev_lock);
+	return;
 }
 
 static int get_mi2s_tdm_auxpcm_intf_index(const char *stream_name)
@@ -422,8 +439,7 @@ int msm_common_snd_hw_params(struct snd_pcm_substream *substream,
 				intf_clk_cfg.clk_root = 0;
 
 				if (pdata->is_audio_hw_vote_required[index]  &&
-					(is_fractional_sample_rate(rate) ||
-					(index == QUIN_MI2S_TDM_AUXPCM))) {
+					is_fractional_sample_rate(rate)) {
 					ret = mi2s_tdm_hw_vote_req(pdata, 1);
 					if (ret < 0) {
 						pr_err("%s lpass audio hw vote enable failed %d\n",
@@ -488,8 +504,7 @@ int msm_common_snd_hw_params(struct snd_pcm_substream *substream,
 				intf_clk_cfg.clk_root = CLOCK_ROOT_DEFAULT;
 
 				if (pdata->is_audio_hw_vote_required[index]  &&
-					(is_fractional_sample_rate(rate) ||
-					(index == QUIN_MI2S_TDM_AUXPCM))) {
+					is_fractional_sample_rate(rate)) {
 					ret = mi2s_tdm_hw_vote_req(pdata, 1);
 					if (ret < 0) {
 						pr_err("%s lpass audio hw vote enable failed %d\n",
@@ -577,6 +592,8 @@ void msm_common_snd_shutdown(struct snd_pcm_substream *substream)
 		return;
 	}
 
+	check_userspace_service_state(rtd, pdata);
+
 	if (index >= 0) {
 		mutex_lock(&pdata->lock[index]);
 		atomic_dec(&pdata->lpass_intf_clk_ref_cnt[index]);
@@ -605,8 +622,7 @@ void msm_common_snd_shutdown(struct snd_pcm_substream *substream)
 			}
 
 			if (pdata->is_audio_hw_vote_required[index]  &&
-				(is_fractional_sample_rate(rate) ||
-				(index == QUIN_MI2S_TDM_AUXPCM))) {
+				is_fractional_sample_rate(rate)) {
 				ret = mi2s_tdm_hw_vote_req(pdata, 0);
 			}
 		} else if (atomic_read(&pdata->lpass_intf_clk_ref_cnt[index]) < 0) {
@@ -632,30 +648,24 @@ void msm_common_snd_shutdown(struct snd_pcm_substream *substream)
 
 static void msm_audio_add_qos_request(void)
 {
-	int num_req = 0;
+	int i;
 	int cpu = 0;
 	int ret = 0;
-	int cid, prev_cid = -1;
-	int cluster_num = 0;
-	cpumask_t* cluster_cpu_mask = NULL;
 
 	msm_audio_req = kcalloc(num_possible_cpus(),
 			sizeof(struct dev_pm_qos_request), GFP_KERNEL);
 	if (!msm_audio_req)
 		return;
 
-	for_each_cpu(cpu, cpu_possible_mask) {
-		cid = topology_cluster_id(cpu);
-		if(cid != prev_cid) {
-			cluster_first_cpu[cluster_num++] = cpu;
-			prev_cid = cid;
-		}
+	for (i = 0; i < ARRAY_SIZE(audio_core_list); i++) {
+		if (audio_core_list[i] >= num_possible_cpus())
+			pr_err("%s incorrect cpu id: %d specified.\n",
+                                    __func__, audio_core_list[i]);
+		else
+			cpumask_set_cpu(audio_core_list[i], &audio_cpu_map);
 	}
 
-	/* Pick the first cluster as it represents the Silver cluster. */
-	cluster_cpu_mask = topology_core_cpumask(cluster_first_cpu[0]);
-
-	for_each_cpu(cpu, cluster_cpu_mask) {
+	for_each_cpu(cpu, &audio_cpu_map) {
 		ret = dev_pm_qos_add_request(get_cpu_device(cpu),
 			    &msm_audio_req[cpu],
 			    DEV_PM_QOS_RESUME_LATENCY,
@@ -663,11 +673,7 @@ static void msm_audio_add_qos_request(void)
 		if (ret < 0)
 			pr_err("%s error (%d) adding resume latency to cpu %d.\n",
                                                 __func__, ret, cpu);
-		pr_debug("%s set cpu affinity to logical core %d.\n", __func__, cpu);
-
-		/* Limit the request to 2 silver cpu cores. */
-		if (++num_req == 2)
-			break;
+		pr_debug("%s set cpu affinity to core %d.\n", __func__, cpu);
 	}
 }
 
@@ -675,12 +681,9 @@ static void msm_audio_remove_qos_request(void)
 {
 	int cpu = 0;
 	int ret = 0;
-	cpumask_t* cluster_cpu_mask = NULL;
-
-	cluster_cpu_mask = topology_core_cpumask(cluster_first_cpu[0]);
 
 	if (msm_audio_req) {
-		for_each_cpu(cpu, cluster_cpu_mask) {
+		for_each_cpu(cpu, &audio_cpu_map) {
 			ret = dev_pm_qos_remove_request(
 				    &msm_audio_req[cpu]);
 			if (ret < 0)
@@ -804,8 +807,6 @@ int msm_common_snd_init(struct platform_device *pdev, struct snd_soc_card *card)
 	/* Add QoS request for audio tasks */
 	msm_audio_add_qos_request();
 
-	mutex_init(&vote_against_sleep_lock);
-
 	return 0;
 };
 
@@ -816,7 +817,6 @@ void msm_common_snd_deinit(struct msm_common_pdata *common_pdata)
 	if (!common_pdata)
 		return;
 
-	mutex_destroy(&vote_against_sleep_lock);
 	msm_audio_remove_qos_request();
 
 	mutex_destroy(&common_pdata->aud_dev_lock);
@@ -971,13 +971,9 @@ static void msm_audio_update_qos_request(u32 latency)
 {
 	int cpu = 0;
 	int ret = -1;
-	int num_req = 0;
-	cpumask_t* cluster_cpu_mask = NULL;
-
-	cluster_cpu_mask = topology_core_cpumask(cluster_first_cpu[0]);
 
 	if (msm_audio_req) {
-		for_each_cpu(cpu, cluster_cpu_mask) {
+		for_each_cpu(cpu, &audio_cpu_map) {
 			ret = dev_pm_qos_update_request(
 					&msm_audio_req[cpu], latency);
 			if (1 == ret ) {
@@ -990,9 +986,6 @@ static void msm_audio_update_qos_request(u32 latency)
 				pr_err("%s: failed to update latency of core %d, error %d \n",
 								__func__, cpu, ret);
 			}
-			/* Limit the request to 2 Silver CPU cores. */
-			if (++num_req == 2)
-				break;
 		}
 	}
 }
@@ -1049,7 +1042,6 @@ static int msm_vote_against_sleep_ctl_put(struct snd_kcontrol *kcontrol,
 {
 	int ret = 0;
 
-	mutex_lock(&vote_against_sleep_lock);
 	vote_against_sleep_enable = ucontrol->value.integer.value[0];
 	pr_debug("%s: vote against sleep enable: %d sleep cnt: %d", __func__,
 			vote_against_sleep_enable, vote_against_sleep_cnt);
@@ -1059,8 +1051,7 @@ static int msm_vote_against_sleep_ctl_put(struct snd_kcontrol *kcontrol,
 		if (vote_against_sleep_cnt ==  1) {
 			ret = audio_prm_set_vote_against_sleep(1);
 			if (ret < 0) {
-				if (vote_against_sleep_cnt > 0)
-					--vote_against_sleep_cnt;
+				--vote_against_sleep_cnt;
 				pr_err("%s: failed to vote against sleep ret: %d\n", __func__, ret);
 			}
 		}
@@ -1072,7 +1063,6 @@ static int msm_vote_against_sleep_ctl_put(struct snd_kcontrol *kcontrol,
 	}
 
 	pr_debug("%s: vote against sleep vote ret: %d\n", __func__, ret);
-	mutex_unlock(&vote_against_sleep_lock);
 	return ret;
 }
 
