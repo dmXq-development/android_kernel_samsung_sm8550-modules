@@ -1194,6 +1194,8 @@ int dsi_panel_set_backlight(struct dsi_panel *panel, u32 bl_lvl)
 		rc = -ENOTSUPP;
 	}
 
+	bl->real_bl_level = bl_lvl;
+
 	return rc;
 }
 
@@ -3249,6 +3251,7 @@ static int dsi_panel_parse_bl_config(struct dsi_panel *panel)
 	panel->bl_config.bl_scale = MAX_BL_SCALE_LEVEL;
 	panel->bl_config.bl_scale_sv = MAX_SV_BL_SCALE_LEVEL;
 	panel->bl_config.dimming_min_bl = 0;
+	panel->bl_config.real_bl_level = 0;
 	panel->bl_config.dimming_status = DIMMING_ENABLE;
 	panel->bl_config.user_disable_notification = false;
 
