@@ -1033,7 +1033,6 @@ int sde_connector_pre_kickoff(struct drm_connector *connector)
 	int rc;
 #if IS_ENABLED(CONFIG_DISPLAY_SAMSUNG)
 	struct samsung_display_driver_data *vdd;
-	u32 finger_mask_state;
 #endif
 
 	if (!connector) {
@@ -1078,8 +1077,6 @@ int sde_connector_pre_kickoff(struct drm_connector *connector)
 		/* SAMSUNG_FINGERPRINT */
 		vdd = display->panel->panel_private;
 		if (vdd->support_optical_fingerprint) {
-			finger_mask_state = sde_connector_get_property(c_conn->base.state,
-					CONNECTOR_PROP_FINGERPRINT_MASK);
 			/* To prevent race condition between Finger Mask Commit & VRR Commit
 			 * P230622-05552 : Race condition beteen Finger Mask & VRR(HS - PHS Switching)
 			 * Incase of VRR switching, VRR shulod be changed even though finger mask is being changed.
@@ -1090,11 +1087,11 @@ int sde_connector_pre_kickoff(struct drm_connector *connector)
 			 * vdd->finger_mask_updated=true -> finger_mask brightness_update -> vdd->finger_mask_updated=false -> vrr brightness_update (OK)
 			 */
 
-			if (finger_mask_state != vdd->finger_mask) {
+			if (vdd->finger_mask_enable != vdd->finger_mask) {
 				mutex_lock(&vdd->vrr.vrr_lock);
-				SDE_INFO("[FINGER_MASK]updated finger mask mode %d\n", finger_mask_state);
+				SDE_INFO("[FINGER_MASK]updated finger mask mode %d\n", vdd->finger_mask_enable);
 				vdd->finger_mask_updated = true;
-				vdd->finger_mask = finger_mask_state;
+				vdd->finger_mask = vdd->finger_mask_enable;
 				ss_send_hbm_fingermask_image_tx(vdd, vdd->finger_mask);
 				vdd->finger_mask_updated = false;
 				mutex_unlock(&vdd->vrr.vrr_lock);
@@ -3328,13 +3325,6 @@ static int _sde_connector_install_properties(struct drm_device *dev,
 	msm_property_install_range(&c_conn->property_info, "bl_scale",
 		0x0, 0, MAX_BL_SCALE_LEVEL, MAX_BL_SCALE_LEVEL,
 		CONNECTOR_PROP_BL_SCALE);
-
-#if IS_ENABLED(CONFIG_DISPLAY_SAMSUNG)
-	/* SAMSUNG_FINGERPRINT */
-	msm_property_install_range(&c_conn->property_info, "fingerprint_mask",
-		0x0, 0, 100, 0,
-		CONNECTOR_PROP_FINGERPRINT_MASK);
-#endif
 
 	msm_property_install_range(&c_conn->property_info, "sv_bl_scale",
 		0x0, 0, U32_MAX, MAX_SV_BL_SCALE_LEVEL,

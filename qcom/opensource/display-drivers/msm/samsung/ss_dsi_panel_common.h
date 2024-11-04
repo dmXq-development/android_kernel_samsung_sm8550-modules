@@ -2524,6 +2524,7 @@ struct cmd_ref_state {
 	int bl_level;
 	int temperature;
 	bool finger_mask_updated;
+	bool finger_mask_enable;
 	int panel_revision;
 };
 
