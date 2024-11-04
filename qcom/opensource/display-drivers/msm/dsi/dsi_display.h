@@ -844,6 +844,8 @@ bool dsi_display_mode_match(const struct dsi_display_mode *mode1,
  */
 int dsi_display_update_transfer_time(void *display, u32 transfer_time);
 
+struct dsi_display *get_main_display(void);
+
 #if IS_ENABLED(CONFIG_DISPLAY_SAMSUNG)
 int dsi_display_ctrl_init(struct dsi_display *display);
 int dsi_display_ctrl_deinit(struct dsi_display *display);

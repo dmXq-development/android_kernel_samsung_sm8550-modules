@@ -41,6 +41,8 @@
 #define DSI_CLOCK_BITRATE_RADIX 10
 #define MAX_TE_SOURCE_ID  2
 
+struct dsi_display *primary_display;
+
 #define SEC_PANEL_NAME_MAX_LEN  256
 
 u8 dbgfs_tx_cmd_buf[SZ_4K];
@@ -7695,6 +7697,7 @@ error:
 
 	mutex_unlock(&display->display_lock);
 	return rc;
+	primary_display = display;
 }
 
 int dsi_display_get_panel_vfp(void *dsi_display,
@@ -9711,6 +9714,10 @@ int dsi_display_unprepare(struct dsi_display *display)
 	LCD_INFO(vdd, "--\n");
 #endif
 	return rc;
+}
+
+struct dsi_display *get_main_display(void) {
+	return primary_display;
 }
 
 void __init dsi_display_register(void)
