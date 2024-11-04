@@ -408,6 +408,8 @@ void sde_plane_set_sid(struct drm_plane *plane, u32 vm);
 bool sde_plane_is_cache_required(struct drm_plane *plane,
 		enum sde_sys_cache_type type);
 
+int sde_plane_is_fod_layer(const struct drm_plane_state *drm_state);
+
 /**
  * sde_plane_static_img_control - Switch the static image state
  * @plane: Pointer to drm plane structure
